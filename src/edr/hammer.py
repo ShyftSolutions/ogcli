@@ -9,11 +9,15 @@ fired with a thread pool. Mirrors src/wms/hammer.py.
 
 import logging
 import random
+import sys
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+import requests
 
 from .client import EDRClient
 from .parser import EDRCollection
@@ -39,16 +43,35 @@ class HammerStats:
     failed: int = 0
     bytes: int = 0
     latencies: List[float] = field(default_factory=list)
+    status_counts: dict = field(default_factory=dict)   # {http_status: count}
     start: float = 0.0
     end: float = 0.0
+
+    def record(self, ok: bool, nbytes: int, latency: float, status: Optional[int]):
+        if ok:
+            self.success += 1
+        else:
+            self.failed += 1
+        self.bytes += nbytes
+        self.latencies.append(latency)
+        if status is not None:
+            key = str(status)
+            self.status_counts[key] = self.status_counts.get(key, 0) + 1
 
     def report(self) -> str:
         duration = self.end - self.start if self.end else 0.0
         lines = [
             f"Requests: {self.total} total, {self.success} ok, {self.failed} failed",
-            f"Duration: {duration:.1f}s  ({self.total / duration:.1f} req/s)" if duration else "Duration: -",
-            f"Data:     {self.bytes / 1024:.1f} KB",
         ]
+        if self.status_counts:
+            breakdown = "  ".join(
+                f"{code}: {n}" for code, n in sorted(self.status_counts.items())
+            )
+            lines.append(f"Status:   {breakdown}")
+        lines.append(
+            f"Duration: {duration:.1f}s  ({self.total / duration:.1f} req/s)" if duration else "Duration: -"
+        )
+        lines.append(f"Data:     {self.bytes / 1024:.1f} KB")
         if self.latencies:
             s = sorted(self.latencies)
             avg = sum(s) / len(s)
@@ -196,28 +219,116 @@ class EDRHammer:
     # ------------------------------------------------------------------
 
     def _execute(self, request: HammerRequest) -> tuple:
-        """Run one request. Returns (label, ok, latency, nbytes, error)."""
+        """Run one request.
+
+        Returns (label, ok, latency, nbytes, error, status_code).
+        """
         start = time.time()
         try:
-            body, content_type = self.client.query(
-                request.collection,
-                request.query_type,
-                **request.params,
-            )
+            response = self.client._get(request.url, request.params)
             latency = time.time() - start
+            body = response.content
+            content_type = response.headers.get('Content-Type', '')
             if self.save:
                 self.output_dir.mkdir(parents=True, exist_ok=True)
                 ext = 'bin'
-                if 'json' in (content_type or ''):
+                if 'json' in (content_type or '').lower():
                     ext = 'json'
                 elif 'netcdf' in (content_type or '').lower():
                     ext = 'nc'
                 path = self.output_dir / f"{_sanitize(request.label)}.{ext}"
                 path.write_bytes(body)
-            return (request.label, True, latency, len(body), None)
+            return (request.label, True, latency, len(body), None, response.status_code)
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            return (request.label, False, time.time() - start, 0, str(e), status)
         except Exception as e:
-            latency = time.time() - start
-            return (request.label, False, latency, 0, str(e))
+            return (request.label, False, time.time() - start, 0, str(e), None)
+
+    # ------------------------------------------------------------------
+    # Live status display
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _render_status(state: dict) -> "object":
+        """Build the rich Live panel showing run status (no-op if no rich)."""
+        from rich.console import Group
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+        from rich import box
+
+        total = state['total']
+        done = state['done']
+        elapsed = time.time() - state['start']
+        pct = (done / total) if total else 0.0
+        rps = done / elapsed if elapsed > 0 else 0.0
+
+        # Latency percentiles from latencies seen so far
+        lat = sorted(state['latencies']) or [0.0]
+        avg = sum(lat) / len(lat)
+        p95 = lat[min(int(len(lat) * 0.95), len(lat) - 1)]
+
+        mb = state['bytes'] / (1024 * 1024)
+        kb = state['bytes'] / 1024
+        size_str = f"{mb:.1f} MB" if mb >= 1 else f"{kb:.1f} KB"
+
+        bar_len = 26
+        filled = int(bar_len * pct)
+        bar = Text("█" * filled + "░" * (bar_len - filled), style="cyan")
+
+        header_line = Text("EDR Hammer  ", style="bold")
+        header_line += bar
+        header_line.append(f" {done}/{total}", style="bold")
+        header_line.append(f" ({pct:.0%})", style="dim")
+        header_line.append(f"   ✓ {state['ok']}", style="green")
+        header_line.append(f"   ✗ {state['failed']}",
+                           style="red" if state['failed'] else "dim")
+
+        stats_line = Text.assemble(
+            (f"{rps:.1f} req/s", "bold cyan"),
+            (f"   avg {avg*1000:.0f}ms   p95 {p95*1000:.0f}ms", ""),
+            (f"   {size_str} received", ""),
+        )
+
+        header = Group(header_line, stats_line)
+
+        recent = Table(
+            box=box.SIMPLE_HEAD, pad_edge=False, expand=False,
+            show_edge=False,
+        )
+        recent.add_column("time", style="dim", no_wrap=True)
+        recent.add_column("request", no_wrap=True, max_width=48, overflow="ellipsis")
+        recent.add_column("status", justify="right", no_wrap=True)
+        recent.add_column("size", justify="right", no_wrap=True)
+        recent.add_column("ms", justify="right", no_wrap=True)
+
+        for row in state['recent']:
+            ts, label, status, nbytes, latency = row
+            if status is None:
+                status_str = Text("ERR", style="red")
+            elif status < 300:
+                status_str = Text(str(status), style="green")
+            elif status < 500:
+                status_str = Text(str(status), style="yellow")
+            else:
+                status_str = Text(str(status), style="red")
+            if nbytes >= 1024 * 1024:
+                size = f"{nbytes / (1024*1024):.1f}M"
+            elif nbytes > 0:
+                size = f"{nbytes / 1024:.1f}K"
+            else:
+                size = "-"
+            recent.add_row(ts, label, status_str, size, f"{latency*1000:.0f}")
+
+        parts = [header, recent]
+        if state['last_error']:
+            err = state['last_error']
+            if len(err) > 100:
+                err = err[:100] + "..."
+            parts.append(Text(f"last error: {err}", style="red"))
+
+        return Panel(Group(*parts), border_style="cyan")
 
     def run(self) -> HammerStats:
         """Execute the sweep."""
@@ -234,26 +345,74 @@ class EDRHammer:
                 print(f"  ... and {len(self.requests) - 20} more")
             return stats
 
-        logger.info(f"Hammering {len(self.requests)} requests with {self.workers} workers...")
-        stats.start = time.time()
+        use_live = sys.stdout.isatty()
+        if use_live:
+            try:
+                from rich.live import Live
+            except ImportError:
+                use_live = False
 
-        done = 0
-        with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            futures = {executor.submit(self._execute, r): r for r in self.requests}
-            for future in as_completed(futures):
-                label, ok, latency, nbytes, error = future.result()
-                done += 1
-                stats.latencies.append(latency)
-                stats.bytes += nbytes
-                if ok:
-                    stats.success += 1
-                else:
-                    stats.failed += 1
-                    logger.error(f"  ✗ {label}: {error}")
-                if done % 50 == 0:
-                    logger.info(f"  ... {done}/{stats.total}")
+        state = {
+            'total': stats.total, 'done': 0, 'ok': 0, 'failed': 0,
+            'bytes': 0, 'latencies': [], 'recent': deque(maxlen=8),
+            'last_error': None, 'start': time.time(),
+        }
 
-        stats.end = time.time()
+        def handle_result(result, live=None):
+            label, ok, latency, nbytes, error, status = result
+            state['done'] += 1
+            state['bytes'] += nbytes
+            state['latencies'].append(latency)
+            if ok:
+                state['ok'] += 1
+            else:
+                state['failed'] += 1
+                state['last_error'] = f"{label}: {error}" if error else label
+            stats.record(ok, nbytes, latency, status)
+            state['recent'].append(
+                (time.strftime('%H:%M:%S'), label, status, nbytes, latency)
+            )
+            if live is not None:
+                live.update(self._render_status(state))
+
+        if use_live:
+            with Live(self._render_status(state), refresh_per_second=10,
+                      transient=False) as live:
+                stats.start = time.time()
+                state['start'] = stats.start
+                with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                    futures = [executor.submit(self._execute, r) for r in self.requests]
+                    for future in as_completed(futures):
+                        handle_result(future.result(), live=live)
+                stats.end = time.time()
+                live.update(self._render_status(state))
+        else:
+            # Non-TTY fallback: plain progress lines
+            stats.start = time.time()
+            logger.info(
+                f"Hammering {stats.total} requests with {self.workers} workers..."
+            )
+            with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                futures = [executor.submit(self._execute, r) for r in self.requests]
+                for future in as_completed(futures):
+                    result = future.result()
+                    handle_result(result)
+                    label, ok, _lat, _n, error, status = result
+                    if not ok:
+                        err = error or ''
+                        if len(err) > 90:
+                            err = err[:90] + '...'
+                        print(f"  ✗ [{status or 'ERR'}] {label}: {err}")
+                    done = state['done']
+                    if done % 25 == 0 or done == stats.total:
+                        elapsed = time.time() - stats.start
+                        print(
+                            f"  {done}/{stats.total}  ok={state['ok']} "
+                            f"fail={state['failed']}  {state['bytes']/1024:.1f}KB  "
+                            f"{done/elapsed:.1f} req/s"
+                        )
+            stats.end = time.time()
+
         return stats
 
 

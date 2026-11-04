@@ -229,3 +229,5 @@ edr hammer hrrr --query-type cube                  # sweep with cube queries
 ```
 
 Output: success/fail counts, throughput, latency percentiles (avg/p50/p95/max). Responses saved to `edr_hammer_output/` unless `--no-save`.
+
+While running, a live status panel shows the progress bar, ok/fail counts, req/s, latency, data received, and the most recent requests (status code, payload size, duration). Non-TTY sessions get plain progress lines instead.
