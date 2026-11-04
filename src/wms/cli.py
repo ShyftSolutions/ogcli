@@ -17,12 +17,12 @@ from .config import (
     clear_cache, is_cache_valid, CAPS_CACHE_FILE, DEFAULT_CACHE_TTL,
     fetch_capabilities_xml, ensure_config_dir
 )
-from .wms_parser import parse_capabilities, Layer
-from .wms_client import WMSClient
-from .smart_resolver import SmartQueryResolver, AmbiguousQueryError
+from .parser import parse_capabilities, Layer
+from .client import WMSClient
+from .resolver import SmartQueryResolver, AmbiguousQueryError
 from .fuzzy import FuzzySearchEngine
 from .completions import complete_layer_names, complete_group_names
-from .image_display import display_image
+from ..common.display import display_image
 
 
 def get_resolver():

@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.scripts]
-wms = "src.cli:main"
+wms = "src.wms.cli:main"
+edr = "src.edr.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

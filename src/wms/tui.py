@@ -17,10 +17,10 @@ import sys
 from typing import List, Optional
 
 from .config import load_config, get_capabilities_xml, WMSConfig
-from .wms_parser import parse_capabilities, Layer
+from .parser import parse_capabilities, Layer
 from .fuzzy import FuzzySearchEngine, SearchResult
-from .smart_resolver import SmartQueryResolver, ResolvedQuery, AmbiguousQueryError
-from .wms_client import WMSClient
+from .resolver import SmartQueryResolver, ResolvedQuery, AmbiguousQueryError
+from .client import WMSClient
 
 
 class WMSSuggester(Suggester):

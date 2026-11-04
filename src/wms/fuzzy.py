@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from rapidfuzz import fuzz, process
 
-from .wms_parser import WMSCapabilities, Layer
+from .parser import WMSCapabilities, Layer
 
 
 @dataclass

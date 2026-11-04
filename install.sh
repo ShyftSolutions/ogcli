@@ -77,19 +77,26 @@ info "Installing wms-cli..."
 if ! "$INSTALL_DIR/venv/bin/wms" --help &> /dev/null; then
     error "Installation failed"
 fi
-success "Installed wms-cli"
+if ! "$INSTALL_DIR/venv/bin/edr" --help &> /dev/null; then
+    error "Installation failed (edr)"
+fi
+success "Installed wms-cli (wms + edr)"
 
 # Create bin directory
 mkdir -p "$BIN_DIR"
 
-# Create wrapper script
-info "Creating wms command..."
+# Create wrapper scripts
+info "Creating wms and edr commands..."
 cat > "$BIN_DIR/wms" << 'WRAPPER'
 #!/bin/bash
 exec "$HOME/.wms-cli/venv/bin/wms" "$@"
 WRAPPER
-chmod +x "$BIN_DIR/wms"
-success "Created $BIN_DIR/wms"
+cat > "$BIN_DIR/edr" << 'WRAPPER'
+#!/bin/bash
+exec "$HOME/.wms-cli/venv/bin/edr" "$@"
+WRAPPER
+chmod +x "$BIN_DIR/wms" "$BIN_DIR/edr"
+success "Created $BIN_DIR/wms and $BIN_DIR/edr"
 
 # Detect shell and config file
 SHELL_NAME=$(basename "$SHELL")
@@ -133,25 +140,41 @@ case "$SHELL_NAME" in
         COMP_LINE='eval "$(_WMS_COMPLETE=zsh_source wms)"'
         if ! grep -q "_WMS_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
             echo "$COMP_LINE" >> "$CONFIG_FILE"
-            success "Added completion to $CONFIG_FILE"
+            success "Added wms completion to $CONFIG_FILE"
         else
-            success "Completion already configured"
+            success "wms completion already configured"
+        fi
+        COMP_LINE_EDR='eval "$(_EDR_COMPLETE=zsh_source edr)"'
+        if ! grep -q "_EDR_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
+            echo "$COMP_LINE_EDR" >> "$CONFIG_FILE"
+            success "Added edr completion to $CONFIG_FILE"
+        else
+            success "edr completion already configured"
         fi
         ;;
     bash)
         COMP_LINE='eval "$(_WMS_COMPLETE=bash_source wms)"'
         if ! grep -q "_WMS_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
             echo "$COMP_LINE" >> "$CONFIG_FILE"
-            success "Added completion to $CONFIG_FILE"
+            success "Added wms completion to $CONFIG_FILE"
         else
-            success "Completion already configured"
+            success "wms completion already configured"
+        fi
+        COMP_LINE_EDR='eval "$(_EDR_COMPLETE=bash_source edr)"'
+        if ! grep -q "_EDR_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
+            echo "$COMP_LINE_EDR" >> "$CONFIG_FILE"
+            success "Added edr completion to $CONFIG_FILE"
+        else
+            success "edr completion already configured"
         fi
         ;;
     fish)
         FISH_COMP="$HOME/.config/fish/completions/wms.fish"
         mkdir -p "$(dirname "$FISH_COMP")"
         PATH="$BIN_DIR:$PATH" _WMS_COMPLETE=fish_source wms > "$FISH_COMP" 2>/dev/null
-        success "Created Fish completions"
+        FISH_COMP_EDR="$HOME/.config/fish/completions/edr.fish"
+        PATH="$BIN_DIR:$PATH" _EDR_COMPLETE=fish_source edr > "$FISH_COMP_EDR" 2>/dev/null
+        success "Created Fish completions (wms + edr)"
         ;;
     *)
         warn "Manual completion setup needed. See README.md"
@@ -170,12 +193,15 @@ echo "  1. Reload your shell:"
 echo "     ${BLUE}source $CONFIG_FILE${NC}"
 echo "     ${BLUE}# or open a new terminal${NC}"
 echo
-echo "  2. Initialize with a WMS server:"
+echo "  2. Initialize with a server:"
 echo "     ${BLUE}wms init https://ogc.shyftwx.com/ogc/WMS${NC}"
+echo "     ${BLUE}edr init https://folkweather.com/edr${NC}"
 echo
 echo "  3. Start using:"
 echo "     ${BLUE}wms layers${NC}"
 echo "     ${BLUE}wms map gfs temp f 6h${NC}"
+echo "     ${BLUE}edr collections${NC}"
+echo "     ${BLUE}edr position hrrr surface -c -105,40${NC}"
 echo "     ${BLUE}wms <tab>${NC}"
 echo
 echo "  ${BOLD}Install location:${NC} $INSTALL_DIR"

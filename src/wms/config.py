@@ -19,15 +19,18 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 import logging
 
+from ..common.cache import (
+    CONFIG_DIR,
+    DEFAULT_CACHE_TTL,
+    ensure_config_dir,
+    is_cache_valid,
+    touch_cache,
+)
+
 logger = logging.getLogger(__name__)
 
-# Default config directory
-CONFIG_DIR = Path.home() / ".wms"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 CAPS_CACHE_FILE = CONFIG_DIR / "capabilities_cache.xml"
-
-# Default cache TTL in seconds (10 minutes)
-DEFAULT_CACHE_TTL = 600
 
 
 @dataclass
@@ -43,47 +46,6 @@ class WMSConfig:
     def is_initialized(self) -> bool:
         """Check if config has been initialized"""
         return bool(self.source_path)
-
-
-def ensure_config_dir():
-    """Create config directory if it doesn't exist"""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def is_cache_valid(cache_path: Path, ttl_seconds: int) -> bool:
-    """
-    Check if cache file exists and is within TTL.
-
-    Args:
-        cache_path: Path to cache file
-        ttl_seconds: Maximum age in seconds
-
-    Returns:
-        True if cache exists and is not expired
-    """
-    if not cache_path.exists():
-        return False
-
-    try:
-        mtime = cache_path.stat().st_mtime
-        age = time.time() - mtime
-        return age < ttl_seconds
-    except OSError:
-        return False
-
-
-def touch_cache(cache_path: Path) -> None:
-    """
-    Touch cache file to reset its modification time (sliding window).
-
-    Args:
-        cache_path: Path to cache file
-    """
-    try:
-        cache_path.touch()
-        logger.debug(f"Cache touched: {cache_path}")
-    except OSError as e:
-        logger.warning(f"Failed to touch cache: {e}")
 
 
 def clear_cache() -> bool:
@@ -242,7 +204,7 @@ def init_from_file(file_path: str, server_url: Optional[str] = None) -> WMSConfi
         raise FileNotFoundError(f"File not found: {path}")
 
     # Parse to validate and extract service URL
-    from .wms_parser import parse_capabilities
+    from .parser import parse_capabilities
 
     with open(path, 'r', encoding='utf-8') as f:
         xml_content = f.read()
@@ -278,7 +240,7 @@ def init_from_server(server_url: str) -> WMSConfig:
         requests.RequestException: On network error
         ValueError: If capabilities cannot be parsed
     """
-    from .wms_parser import parse_capabilities
+    from .parser import parse_capabilities
 
     # Fetch raw XML (single request)
     xml_content = fetch_capabilities_xml(server_url)

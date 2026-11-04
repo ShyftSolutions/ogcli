@@ -8,7 +8,7 @@ Parses user-friendly expressions and validates against layer's available dimensi
 import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
-from .wms_parser import Layer
+from .parser import Layer
 
 
 class DimensionParser:

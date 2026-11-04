@@ -10,9 +10,9 @@ import re
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
-from .wms_parser import WMSCapabilities, Layer
+from .parser import WMSCapabilities, Layer
 from .fuzzy import FuzzySearchEngine, SearchResult
-from .dimension_parser import DimensionParser
+from .dimensions import DimensionParser
 
 
 @dataclass

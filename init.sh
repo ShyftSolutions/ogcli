@@ -99,7 +99,7 @@ else
 fi
 
 # Activate and install
-info "Installing wms-cli..."
+info "Installing ogcli (wms + edr)..."
 source "$VENV_BIN/activate"
 
 if ! pip install -e "$SCRIPT_DIR" -q --disable-pip-version-check 2>/dev/null; then
@@ -113,7 +113,12 @@ if ! "$VENV_BIN/wms" --help &> /dev/null; then
     error "Installation verification failed"
     exit 1
 fi
-success "Verified installation"
+# Verify edr command works
+if ! "$VENV_BIN/edr" --help &> /dev/null; then
+    error "EDR installation verification failed"
+    exit 1
+fi
+success "Verified installation (wms + edr)"
 
 echo
 
@@ -125,12 +130,12 @@ case "$SHELL_NAME" in
     zsh)
         CONFIG_FILE="$HOME/.zshrc"
         PATH_LINE="export PATH=\"$VENV_BIN:\$PATH\""
-        COMPLETION_LINE='eval "$(_WMS_COMPLETE=zsh_source wms)"'
+        COMPLETION_LINE='eval "$(_WMS_COMPLETE=zsh_source wms)" && eval "$(_EDR_COMPLETE=zsh_source edr)"'
         ;;
     bash)
         CONFIG_FILE="$HOME/.bashrc"
         PATH_LINE="export PATH=\"$VENV_BIN:\$PATH\""
-        COMPLETION_LINE='eval "$(_WMS_COMPLETE=bash_source wms)"'
+        COMPLETION_LINE='eval "$(_WMS_COMPLETE=bash_source wms)" && eval "$(_EDR_COMPLETE=bash_source edr)"'
 
         # Check bash version
         BASH_VER=$(bash -c 'echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}')
@@ -230,7 +235,8 @@ if [ "$SHELL_NAME" = "fish" ]; then
         mkdir -p "$(dirname "$FISH_COMP_FILE")"
         export PATH="$VENV_BIN:$PATH"
         _WMS_COMPLETE=fish_source wms > "$FISH_COMP_FILE" 2>/dev/null
-        success "Created Fish completions"
+        _EDR_COMPLETE=fish_source edr > "${FISH_COMP_FILE/wms.fish/edr.fish}" 2>/dev/null
+        success "Created Fish completions (wms + edr)"
     fi
 else
     if [ "$NEEDS_COMPLETION" = true ]; then
@@ -252,10 +258,12 @@ echo
 echo "  1. Reload your shell config:"
 echo "     ${BLUE}source $CONFIG_FILE${NC}"
 echo
-echo "  2. Initialize with a WMS server:"
+echo "  2. Initialize with a server:"
 echo "     ${BLUE}wms init https://ogc.shyftwx.com/ogc/WMS${NC}"
+echo "     ${BLUE}edr init https://folkweather.com/edr${NC}"
 echo
 echo "  3. Try tab completion:"
 echo "     ${BLUE}wms <tab>${NC}"
 echo "     ${BLUE}wms map gfs<tab>${NC}"
+echo "     ${BLUE}edr <tab>${NC}"
 echo

@@ -7,7 +7,7 @@ Handles HTTP requests to WMS servers for GetCapabilities, GetMap, GetGTile, etc.
 import requests
 import logging
 from typing import Optional, Dict, Any
-from .wms_parser import parse_capabilities, WMSCapabilities
+from .parser import parse_capabilities, WMSCapabilities
 
 logger = logging.getLogger(__name__)
 

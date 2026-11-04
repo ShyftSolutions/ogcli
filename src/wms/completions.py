@@ -12,7 +12,7 @@ def complete_layer_names(ctx, param, incomplete):
     """
     try:
         from .config import load_config, get_capabilities_xml
-        from .wms_parser import parse_capabilities
+        from .parser import parse_capabilities
 
         config = load_config()
         if not config.is_initialized():
@@ -52,7 +52,7 @@ def complete_group_names(ctx, param, incomplete):
     """
     try:
         from .config import load_config, get_capabilities_xml
-        from .wms_parser import parse_capabilities
+        from .parser import parse_capabilities
 
         config = load_config()
         if not config.is_initialized():

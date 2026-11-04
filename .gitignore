@@ -14,11 +14,13 @@ venv/
 .claude/
 .vscode/
 .idea/
+.opencode/
 
 # Output files
 *.png
 batch_output/
 wms_output/
+edr_hammer_output/
 
 # Sample data
 useful-files/

@@ -3,7 +3,7 @@
 WMS Hammer - Automated WMS Request Tool
 
 A modern, clean automation script for batch WMS requests.
-Uses the wms_parser and wms_client modules for robust operation.
+Uses the parser and client modules for robust operation.
 
 Usage:
     As module: from src.hammer import WMSHammer
@@ -19,8 +19,8 @@ import fnmatch
 from itertools import product
 import time
 
-from .wms_client import WMSClient
-from .wms_parser import WMSCapabilities, Layer
+from .client import WMSClient
+from .parser import WMSCapabilities, Layer
 
 # Setup logging
 logging.basicConfig(

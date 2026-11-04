@@ -18,13 +18,13 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.wms_parser import parse_capabilities
-from src.smart_resolver import SmartQueryResolver, AmbiguousQueryError
+from src.wms.parser import parse_capabilities
+from src.wms.resolver import SmartQueryResolver, AmbiguousQueryError
 
 
 def load_test_capabilities():
     """Load test capabilities XML"""
-    caps_path = Path(__file__).parent.parent / "useful-files" / "capabilities.xml"
+    caps_path = Path(__file__).parent / "fixtures" / "capabilities.xml"
     with open(caps_path, 'r') as f:
         xml = f.read()
     return parse_capabilities(xml)

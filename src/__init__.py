@@ -1,8 +1,14 @@
 """
-WMS CLI - Command-line tool for WMS queries with fuzzy search
+ogcli - Command-line tools for OGC services (WMS + EDR)
+with fuzzy search and natural dimension syntax.
+
+Package layout:
+    src/wms/    - WMS (Web Map Service) CLI
+    src/edr/    - EDR (Environmental Data Retrieval) CLI
+    src/common/ - Shared utilities (cache helpers, terminal display)
 """
 
-from .wms_parser import (
+from .wms.parser import (
     parse_capabilities,
     WMSCapabilities,
     Layer,
@@ -12,24 +18,24 @@ from .wms_parser import (
     WMSParser
 )
 
-from .wms_client import (
+from .wms.client import (
     WMSClient,
     create_client
 )
 
-from .fuzzy import (
+from .wms.fuzzy import (
     FuzzySearchEngine,
     SearchResult,
     LayerIndex
 )
 
-from .smart_resolver import (
+from .wms.resolver import (
     SmartQueryResolver,
     ResolvedQuery,
     AmbiguousQueryError
 )
 
-from .config import (
+from .wms.config import (
     load_config,
     save_config,
     init_from_file,
