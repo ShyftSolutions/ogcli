@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# WMS CLI Setup Script
-# Installs the CLI and enables shell completion
+# ogcli Setup Script
+# Installs the CLIs (wms + edr) and enables shell completion
 #
 
 # Colors (disabled if not a terminal)
@@ -41,7 +41,7 @@ VENV_BIN="$VENV_DIR/bin"
 # Header
 echo
 echo -e "${BOLD}╔════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║         WMS CLI Setup              ║${NC}"
+echo -e "${BOLD}║     OGC CLI Setup (wms + edr)      ║${NC}"
 echo -e "${BOLD}╚════════════════════════════════════╝${NC}"
 echo
 
@@ -51,7 +51,7 @@ echo -e "${BOLD}Checking prerequisites...${NC}"
 # Check pyproject.toml exists
 if [ ! -f "$SCRIPT_DIR/pyproject.toml" ]; then
     error "pyproject.toml not found"
-    echo "  Make sure you're running this from the wms-cli directory"
+    echo "  Make sure you're running this from the ogcli directory"
     echo "  or that the script hasn't been moved."
     exit 1
 fi
@@ -103,10 +103,10 @@ info "Installing ogcli (wms + edr)..."
 source "$VENV_BIN/activate"
 
 if ! pip install -e "$SCRIPT_DIR" -q --disable-pip-version-check 2>/dev/null; then
-    error "Failed to install wms-cli"
+    error "Failed to install ogcli"
     exit 1
 fi
-success "Installed wms-cli"
+success "Installed ogcli (wms + edr)"
 
 # Verify wms command works
 if ! "$VENV_BIN/wms" --help &> /dev/null; then
@@ -126,16 +126,20 @@ echo
 echo -e "${BOLD}Configuring shell completion...${NC}"
 
 # Determine config based on shell
+COMP_WMS=""
+COMP_EDR=""
 case "$SHELL_NAME" in
     zsh)
         CONFIG_FILE="$HOME/.zshrc"
         PATH_LINE="export PATH=\"$VENV_BIN:\$PATH\""
-        COMPLETION_LINE='eval "$(_WMS_COMPLETE=zsh_source wms)" && eval "$(_EDR_COMPLETE=zsh_source edr)"'
+        COMP_WMS='eval "$(_WMS_COMPLETE=zsh_source wms)"'
+        COMP_EDR='eval "$(_EDR_COMPLETE=zsh_source edr)"'
         ;;
     bash)
         CONFIG_FILE="$HOME/.bashrc"
         PATH_LINE="export PATH=\"$VENV_BIN:\$PATH\""
-        COMPLETION_LINE='eval "$(_WMS_COMPLETE=bash_source wms)" && eval "$(_EDR_COMPLETE=bash_source edr)"'
+        COMP_WMS='eval "$(_WMS_COMPLETE=bash_source wms)"'
+        COMP_EDR='eval "$(_EDR_COMPLETE=bash_source edr)"'
 
         # Check bash version
         BASH_VER=$(bash -c 'echo ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}')
@@ -152,7 +156,6 @@ case "$SHELL_NAME" in
         CONFIG_FILE="$HOME/.config/fish/config.fish"
         FISH_COMP_FILE="$HOME/.config/fish/completions/wms.fish"
         PATH_LINE="set -gx PATH $VENV_BIN \$PATH"
-        COMPLETION_LINE=""
         ;;
     *)
         warn "Unknown shell: $SHELL_NAME"
@@ -165,9 +168,12 @@ case "$SHELL_NAME" in
         ;;
 esac
 
-# Check what needs to be added
+# Check what needs to be added (each tool's completion is tracked
+# independently, so adding edr later doesn't get skipped because wms
+# is already configured)
 NEEDS_PATH=false
-NEEDS_COMPLETION=false
+ADD_WMS_COMP=false
+ADD_EDR_COMP=false
 
 if ! grep -q "$VENV_BIN" "$CONFIG_FILE" 2>/dev/null; then
     NEEDS_PATH=true
@@ -175,12 +181,23 @@ fi
 
 if [ "$SHELL_NAME" = "fish" ]; then
     if [ ! -f "$FISH_COMP_FILE" ]; then
-        NEEDS_COMPLETION=true
+        ADD_WMS_COMP=true
+    fi
+    if [ ! -f "${FISH_COMP_FILE/wms.fish/edr.fish}" ]; then
+        ADD_EDR_COMP=true
     fi
 else
     if ! grep -q "_WMS_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
-        NEEDS_COMPLETION=true
+        ADD_WMS_COMP=true
     fi
+    if ! grep -q "_EDR_COMPLETE" "$CONFIG_FILE" 2>/dev/null; then
+        ADD_EDR_COMP=true
+    fi
+fi
+
+NEEDS_COMPLETION=false
+if [ "$ADD_WMS_COMP" = true ] || [ "$ADD_EDR_COMP" = true ]; then
+    NEEDS_COMPLETION=true
 fi
 
 # If nothing to do, we're done
@@ -190,21 +207,27 @@ if [ "$NEEDS_PATH" = false ] && [ "$NEEDS_COMPLETION" = false ]; then
     echo -e "${BOLD}${GREEN}Setup complete!${NC}"
     echo
     echo "  Run: source $CONFIG_FILE"
-    echo "  Then: wms <tab>"
+    echo "  Then: wms <tab>  /  edr <tab>"
     echo
     exit 0
 fi
 
 # Show what will be added
 echo
-echo "  The following will be added to ${BOLD}$CONFIG_FILE${NC}:"
+echo "  The following will be added:"
 echo
 if [ "$NEEDS_PATH" = true ]; then
-    echo "    ${BLUE}# WMS CLI${NC}"
+    echo "    ${BLUE}# ogcli (wms + edr)${NC}"
     echo "    ${BLUE}$PATH_LINE${NC}"
 fi
-if [ "$NEEDS_COMPLETION" = true ] && [ -n "$COMPLETION_LINE" ]; then
-    echo "    ${BLUE}$COMPLETION_LINE${NC}"
+if [ "$ADD_WMS_COMP" = true ] && [ -n "$COMP_WMS" ]; then
+    echo "    ${BLUE}$COMP_WMS${NC}   (to $CONFIG_FILE)"
+fi
+if [ "$ADD_EDR_COMP" = true ] && [ -n "$COMP_EDR" ]; then
+    echo "    ${BLUE}$COMP_EDR${NC}   (to $CONFIG_FILE)"
+fi
+if [ "$SHELL_NAME" = "fish" ] && [ "$NEEDS_COMPLETION" = true ]; then
+    echo "    ${BLUE}fish completions (wms + edr)${NC}"
 fi
 echo
 
@@ -216,9 +239,10 @@ if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ -n $REPLY ]]; then
     echo
     warn "Skipped shell configuration"
     echo
-    echo "  To set up manually, add to $CONFIG_FILE:"
+    echo "  To set up manually:"
     [ "$NEEDS_PATH" = true ] && echo "    $PATH_LINE"
-    [ "$NEEDS_COMPLETION" = true ] && [ -n "$COMPLETION_LINE" ] && echo "    $COMPLETION_LINE"
+    [ "$ADD_WMS_COMP" = true ] && [ -n "$COMP_WMS" ] && echo "    $COMP_WMS"
+    [ "$ADD_EDR_COMP" = true ] && [ -n "$COMP_EDR" ] && echo "    $COMP_EDR"
     echo
     exit 0
 fi
@@ -226,21 +250,29 @@ fi
 # Add configuration
 if [ "$NEEDS_PATH" = true ]; then
     echo "" >> "$CONFIG_FILE"
-    echo "# WMS CLI" >> "$CONFIG_FILE"
+    echo "# ogcli (wms + edr)" >> "$CONFIG_FILE"
     echo "$PATH_LINE" >> "$CONFIG_FILE"
 fi
 
 if [ "$SHELL_NAME" = "fish" ]; then
-    if [ "$NEEDS_COMPLETION" = true ]; then
+    export PATH="$VENV_BIN:$PATH"
+    if [ "$ADD_WMS_COMP" = true ]; then
         mkdir -p "$(dirname "$FISH_COMP_FILE")"
-        export PATH="$VENV_BIN:$PATH"
         _WMS_COMPLETE=fish_source wms > "$FISH_COMP_FILE" 2>/dev/null
-        _EDR_COMPLETE=fish_source edr > "${FISH_COMP_FILE/wms.fish/edr.fish}" 2>/dev/null
-        success "Created Fish completions (wms + edr)"
+        success "Created wms fish completion"
+    fi
+    if [ "$ADD_EDR_COMP" = true ]; then
+        EDR_FISH_COMP="${FISH_COMP_FILE/wms.fish/edr.fish}"
+        mkdir -p "$(dirname "$EDR_FISH_COMP")"
+        _EDR_COMPLETE=fish_source edr > "$EDR_FISH_COMP" 2>/dev/null
+        success "Created edr fish completion"
     fi
 else
-    if [ "$NEEDS_COMPLETION" = true ]; then
-        echo "$COMPLETION_LINE" >> "$CONFIG_FILE"
+    if [ "$ADD_WMS_COMP" = true ]; then
+        echo "$COMP_WMS" >> "$CONFIG_FILE"
+    fi
+    if [ "$ADD_EDR_COMP" = true ]; then
+        echo "$COMP_EDR" >> "$CONFIG_FILE"
     fi
 fi
 

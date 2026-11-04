@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# WMS CLI Global Install Script
-# Installs wms command globally so it works from anywhere
+# ogcli Global Install Script
+# Installs the wms and edr commands globally so they work from anywhere
 #
 
 set -e
@@ -35,7 +35,7 @@ BIN_DIR="$HOME/.local/bin"
 # Header
 echo
 echo -e "${BOLD}╔════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║     WMS CLI Global Install         ║${NC}"
+echo -e "${BOLD}║   ogcli Global Install (wms+edr)   ║${NC}"
 echo -e "${BOLD}╚════════════════════════════════════╝${NC}"
 echo
 
@@ -43,7 +43,7 @@ echo
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ! -f "$SOURCE_DIR/pyproject.toml" ]; then
-    error "pyproject.toml not found. Run this from the wms-cli directory."
+    error "pyproject.toml not found. Run this from the ogcli directory."
 fi
 
 # Check Python
@@ -70,7 +70,7 @@ info "Creating virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv"
 
 # Install package
-info "Installing wms-cli..."
+info "Installing ogcli (wms + edr)..."
 "$INSTALL_DIR/venv/bin/pip" install -q --disable-pip-version-check "$SOURCE_DIR"
 
 # Verify installation
@@ -80,7 +80,7 @@ fi
 if ! "$INSTALL_DIR/venv/bin/edr" --help &> /dev/null; then
     error "Installation failed (edr)"
 fi
-success "Installed wms-cli (wms + edr)"
+success "Installed ogcli (wms + edr)"
 
 # Create bin directory
 mkdir -p "$BIN_DIR"
@@ -115,7 +115,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     if [ -n "$CONFIG_FILE" ]; then
         if ! grep -q "$BIN_DIR" "$CONFIG_FILE" 2>/dev/null; then
             echo "" >> "$CONFIG_FILE"
-            echo "# WMS CLI" >> "$CONFIG_FILE"
+            echo "# ogcli (wms + edr)" >> "$CONFIG_FILE"
             if [ "$SHELL_NAME" = "fish" ]; then
                 echo "set -gx PATH $BIN_DIR \$PATH" >> "$CONFIG_FILE"
             else
@@ -187,7 +187,7 @@ echo -e "${BOLD}${GREEN}══════════════════�
 echo -e "${BOLD}${GREEN}  Installation complete!            ${NC}"
 echo -e "${BOLD}${GREEN}════════════════════════════════════${NC}"
 echo
-echo "  ${BOLD}To start using wms:${NC}"
+echo "  ${BOLD}To start using wms and edr:${NC}"
 echo
 echo "  1. Reload your shell:"
 echo "     ${BLUE}source $CONFIG_FILE${NC}"
@@ -205,5 +205,5 @@ echo "     ${BLUE}edr position hrrr surface -c -105,40${NC}"
 echo "     ${BLUE}wms <tab>${NC}"
 echo
 echo "  ${BOLD}Install location:${NC} $INSTALL_DIR"
-echo "  ${BOLD}Command:${NC} $BIN_DIR/wms"
+echo "  ${BOLD}Commands:${NC} $BIN_DIR/wms, $BIN_DIR/edr"
 echo
