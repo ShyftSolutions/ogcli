@@ -11,6 +11,7 @@ Reference: OGC API - EDR Part 1: Core
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 
@@ -20,14 +21,15 @@ logger = logging.getLogger(__name__)
 def _label_of(value) -> str:
     """
     Extract a human-readable label from nested JSON, e.g.:
-        {"label": {"en": "RH"}} -> "RH"
-        {"en": "RH"}            -> "RH"
-        "RH"                    -> "RH"
+        {"label": {"en": "RH"}}    -> "RH"
+        {"en": "RH"}               -> "RH"
+        {"value": "km2", ...}      -> "km2"
+        "RH"                       -> "RH"
     """
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        for key in ("label", "en", "name", "id"):
+        for key in ("label", "en", "name", "value", "id"):
             if key in value:
                 got = _label_of(value[key])
                 if got:
@@ -47,11 +49,15 @@ class Parameter:
     def from_json(cls, data: dict) -> "Parameter":
         unit = data.get("unit", "")
         if isinstance(unit, dict):
-            unit = unit.get("symbol") or _label_of(unit) or ""
+            symbol = unit.get("symbol")
+            if isinstance(symbol, dict):
+                # e.g. {"value": "km2", "type": "<qudt uri>"}
+                symbol = _label_of(symbol)
+            unit = symbol or _label_of(unit) or ""
         obs = _label_of(data.get("observedProperty", ""))
         return cls(
             id=data.get("id", ""),
-            label=data.get("label", ""),
+            label=data.get("label", "") or "",
             unit=unit or "",
             observed_property=obs or "",
         )
@@ -166,10 +172,23 @@ class EDRCapabilities:
         return sorted(types)
 
 
+def _pretty_crs(crs: str) -> str:
+    """
+    Normalize a CRS identifier. Some servers (e.g. Met Office Labs)
+    provide full WKT instead of a URI - extract the EPSG authority
+    code from it for a readable display.
+    """
+    if crs and re.match(r'^(GEOGCS|PROJCS|GEODCRS|ENGCS)\[', crs):
+        codes = re.findall(r'AUTHORITY\["EPSG","(\d+)"\]', crs)
+        if codes:
+            return f"EPSG:{codes[-1]}"
+    return crs
+
+
 def _parse_bbox(extent: dict) -> Tuple[Optional[List[float]], str]:
     spatial = extent.get("spatial", {}) or {}
     bboxes = spatial.get("bbox") or []
-    crs = spatial.get("crs", "CRS:84")
+    crs = _pretty_crs(spatial.get("crs", "CRS:84") or "CRS:84")
     if bboxes and isinstance(bboxes[0], list):
         return list(bboxes[0]), crs
     return None, crs
