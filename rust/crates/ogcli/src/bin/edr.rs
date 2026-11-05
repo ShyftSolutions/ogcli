@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use ogcli_core::edr::config::{
     self as edr_config, EdrConfig,
 };
+use ogcli_core::edr::query::{build_query, QueryOptions};
 use ogcli_core::edr::resolver::EdrResolver;
 
 #[derive(Parser)]
@@ -71,6 +72,107 @@ enum Command {
     },
     /// Show detailed information about a collection
     Describe { query: Vec<String> },
+    /// Point query (coords=POINT)
+    Position(QueryArgs),
+    /// Radius query (coords=POINT + within)
+    Radius(QueryArgs),
+    /// Area query (coords=POLYGON or --bbox)
+    Area(QueryArgs),
+    /// Cube query (bbox + vertical + time)
+    Cube(QueryArgs),
+    /// Trajectory query (coords=LINESTRING)
+    Trajectory(QueryArgs),
+    /// Corridor query (LINESTRING + width)
+    Corridor(QueryArgs),
+    /// List named locations for a collection (or fetch one with --id)
+    Locations {
+        query: Vec<String>,
+        /// Fetch data at a specific location id
+        #[arg(long = "id", value_name = "ID")]
+        location_id: Option<String>,
+        /// Time filter
+        #[arg(short = 't', long = "datetime", value_name = "TIME")]
+        datetime: Option<String>,
+        /// Vertical level filter
+        #[arg(short = 'z', long)]
+        z: Option<String>,
+        /// Parameter name(s)
+        #[arg(short = 'p', long)]
+        param: Option<String>,
+        /// Max locations to list
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// List model-run instances for a collection
+    Instances { query: Vec<String> },
+    /// Build an EDR URL without fetching
+    Url {
+        request_type: String,
+        query: Vec<String>,
+        #[command(flatten)]
+        opts: QueryOptionsArgs,
+    },
+}
+
+/// Shared arguments for the geometry query commands.
+#[derive(clap::Args, Debug)]
+pub struct QueryArgs {
+    query: Vec<String>,
+    /// Coordinates: "lon,lat" or WKT (POINT(-105 40))
+    #[arg(short = 'c', long, allow_hyphen_values = true)]
+    coords: Option<String>,
+    /// Bounding box minx,miny,maxx,maxy (area/cube)
+    #[arg(short = 'b', long, allow_hyphen_values = true)]
+    bbox: Option<String>,
+    /// Time: latest, +6h, PT6H, ISO instant, or a/b interval
+    #[arg(short = 't', long = "datetime", value_name = "TIME")]
+    datetime: Option<String>,
+    /// Vertical level: 850, 850mb, or low/high interval
+    #[arg(short = 'z', long)]
+    z: Option<String>,
+    /// Parameter name(s), comma-separated
+    #[arg(short = 'p', long)]
+    param: Option<String>,
+    /// Output CRS
+    #[arg(long)]
+    crs: Option<String>,
+    /// Output format (f= parameter)
+    #[arg(short = 'f', long)]
+    format: Option<String>,
+    /// Search distance (radius), e.g. 25km
+    #[arg(long)]
+    within: Option<String>,
+    /// Corridor width, e.g. 10km
+    #[arg(long)]
+    width: Option<String>,
+    /// Instance (model run) id
+    #[arg(long)]
+    instance: Option<String>,
+    /// Output filename
+    #[arg(short = 'o', long)]
+    output: Option<String>,
+    /// Show resolved URL without fetching
+    #[arg(short = 'd', long)]
+    debug: bool,
+}
+
+/// Options-only variant for `edr url`.
+#[derive(clap::Args, Debug)]
+pub struct QueryOptionsArgs {
+    #[arg(short = 'c', long, allow_hyphen_values = true)]
+    coords: Option<String>,
+    #[arg(short = 'b', long, allow_hyphen_values = true)]
+    bbox: Option<String>,
+    #[arg(short = 't', long = "datetime", value_name = "TIME")]
+    datetime: Option<String>,
+    #[arg(short = 'z', long)]
+    z: Option<String>,
+    #[arg(short = 'p', long)]
+    param: Option<String>,
+    #[arg(long)]
+    within: Option<String>,
+    #[arg(long)]
+    width: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -120,6 +222,37 @@ fn run(cli: Cli) -> Result<()> {
             cmd_collections(query, limit, all, verbose, as_json, count, config)
         }
         Command::Describe { query } => cmd_describe(query, config),
+        Command::Position(args) => cmd_query("position", &args, config),
+        Command::Radius(args) => {
+            if args.within.is_none() {
+                bail!("radius query requires --within (e.g. --within 25km)");
+            }
+            cmd_query("radius", &args, config)
+        }
+        Command::Area(args) => cmd_query("area", &args, config),
+        Command::Cube(args) => cmd_query("cube", &args, config),
+        Command::Trajectory(args) => {
+            if args.coords.is_none() && args.bbox.is_none() {
+                bail!("trajectory requires --coords (two or more points)");
+            }
+            cmd_query("trajectory", &args, config)
+        }
+        Command::Corridor(args) => {
+            if args.width.is_none() {
+                bail!("corridor requires --width (e.g. --width 10km)");
+            }
+            if args.coords.is_none() && args.bbox.is_none() {
+                bail!("corridor requires --coords (two or more points)");
+            }
+            cmd_query("corridor", &args, config)
+        }
+        Command::Locations { query, location_id, datetime, z, param, limit } => {
+            cmd_locations(query, location_id, datetime, z, param, limit, config)
+        }
+        Command::Instances { query } => cmd_instances(query, config),
+        Command::Url { request_type, query, opts } => {
+            cmd_url(request_type, query, opts, config)
+        }
     }
 }
 
@@ -427,4 +560,324 @@ fn cmd_describe(query: Vec<String>, config: EdrConfig) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Query commands
+// ---------------------------------------------------------------------------
+
+fn cmd_query(query_type: &str, args: &QueryArgs, config: EdrConfig) -> Result<()> {
+    if !config.is_initialized() {
+        bail!("EDR not initialized. Run 'edr init <url>' first.");
+    }
+    if args.query.is_empty() {
+        bail!("{query_type} requires a collection query");
+    }
+    let resolver = resolver_for(&config)?;
+    let query_str = args.query.join(" ");
+    let resolved = resolver
+        .resolve(&query_str)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let collection = resolver.collection(resolved.collection).clone();
+
+    let opts = QueryOptions {
+        coords: args.coords.clone(),
+        bbox: args.bbox.clone(),
+        datetime: args.datetime.clone(),
+        z: args.z.clone(),
+        param: args.param.clone(),
+        within: args.within.clone(),
+        width: args.width.clone(),
+        instance: args.instance.clone(),
+        crs: args.crs.clone(),
+        format: args.format.clone(),
+    };
+    let built = build_query(&collection, &resolved, query_type, &opts, &resolver)?;
+
+    // Show what we resolved to
+    println!("-> Collection: {}", collection.id);
+    let geom: Vec<String> = built
+        .params
+        .iter()
+        .filter(|(k, _)| k == "coords" || k == "bbox")
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    if !geom.is_empty() {
+        println!("  Query: {query_type} {}", geom.join(" "));
+    } else {
+        println!("  Query: {query_type}");
+    }
+    if let Some(dt) = &built.datetime {
+        println!("  datetime: {dt}");
+    }
+    if let Some(z) = &built.z {
+        println!("  z: {z}");
+    }
+    if let Some(p) = &built.param {
+        println!("  parameter-name: {p}");
+    }
+    if let Some(instance) = &built.instance {
+        println!("  instance: {instance}");
+    }
+    if resolved.confidence < 100.0 {
+        println!("  (confidence: {:.0}%)", resolved.confidence);
+    }
+    for w in &built.warnings {
+        println!("  ! {w}");
+    }
+
+    let url = ogcli_core::edr::query::build_url(config.server_url(), &built, config.api_key());
+    if args.debug {
+        println!();
+        println!("URL:");
+        println!("{url}");
+        return Ok(());
+    }
+
+    println!("Fetching...");
+    let client = ogcli_core::edr::client::EdrClient::new(config.server_url(), config.api_key());
+    let (body, content_type) = client.query(
+        &built.collection_id,
+        &built.query_type,
+        built.instance.as_deref(),
+        &built.params,
+    )?;
+
+    report_response(&body, &content_type, &built.collection_id, &built.query_type, args.output.as_deref());
+    Ok(())
+}
+
+/// Save the raw payload and print a coverage summary (Python parity).
+fn report_response(
+    body: &[u8],
+    content_type: &str,
+    collection_id: &str,
+    query_type: &str,
+    output: Option<&str>,
+) {
+    let is_json = content_type.to_lowercase().contains("json")
+        || body.first().is_some_and(|b| *b == b'{' || *b == b'[');
+    let output = output.map(String::from).unwrap_or_else(|| {
+        let ext = if is_json { "json" } else { "bin" };
+        format!("{collection_id}_{query_type}.{ext}")
+    });
+    let sanitized = output
+        .replace(':', "-")
+        .replace("/", "-")
+        .replace(' ', "_");
+    if let Err(e) = std::fs::write(&sanitized, body) {
+        eprintln!("Error saving {sanitized}: {e}");
+        return;
+    }
+    let size_kb = body.len() as f64 / 1024.0;
+    println!();
+    println!("✓ Saved: {sanitized} ({size_kb:.1} KB)  [{}]",
+             if content_type.is_empty() { "unknown type" } else { content_type });
+
+    if is_json {
+        if let Some(summary) = ogcli_core::edr::parser::summarize_coverage(body) {
+            println!();
+            println!("Coverage summary:");
+            let ctype = if summary.coverage_type.is_empty() { "-" } else { &summary.coverage_type };
+            println!("  type: {ctype}");
+            if !summary.axes.is_empty() {
+                let mut axes: Vec<(&String, &usize)> = summary.axes.iter().collect();
+                axes.sort_by(|a, b| a.0.cmp(b.0));
+                let parts: Vec<String> = axes
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                println!("  axes: {}", parts.join(", "));
+            }
+            for p in &summary.parameters {
+                let mut bits = vec![p.name.clone()];
+                if !p.unit.is_empty() {
+                    bits.push(format!("[{}]", p.unit));
+                }
+                if p.count > 0 {
+                    bits.push(format!("{} values", p.count));
+                }
+                if let Some(min) = p.min {
+                    bits.push(format!("min {:.3e} max {:.3e}", min, p.max.unwrap_or(min)));
+                }
+                if p.nils > 0 {
+                    bits.push(format!("({} nulls)", p.nils));
+                }
+                println!("    {}", bits.join(" "));
+            }
+        }
+    }
+}
+
+fn cmd_locations(
+    query: Vec<String>,
+    location_id: Option<String>,
+    datetime: Option<String>,
+    z: Option<String>,
+    param: Option<String>,
+    limit: usize,
+    config: EdrConfig,
+) -> Result<()> {
+    if !config.is_initialized() {
+        bail!("EDR not initialized. Run 'edr init <url>' first.");
+    }
+    if query.is_empty() {
+        bail!("locations requires a collection query");
+    }
+    let resolver = resolver_for(&config)?;
+    let resolved = resolver
+        .resolve(&query.join(" "))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let c = resolver.collection(resolved.collection);
+    let client = ogcli_core::edr::client::EdrClient::new(config.server_url(), config.api_key());
+
+    if let Some(location_id) = location_id {
+        let mut params: Vec<(String, String)> = Vec::new();
+        if let Some(dt) = &datetime {
+            params.push(("datetime".into(), dt.clone()));
+        }
+        if let Some(z) = &z {
+            params.push(("z".into(), z.clone()));
+        }
+        if let Some(p) = &param {
+            params.push(("parameter-name".into(), p.clone()));
+        }
+        println!("Fetching location '{location_id}'...");
+        let (body, ctype) = client.get_location(&c.id, &location_id, &params)?;
+        report_response(&body, &ctype, &format!("{}_{location_id}", c.id), "location", None);
+        return Ok(());
+    }
+
+    println!("-> Collection: {}", c.id);
+    println!("Fetching locations...");
+    let data = client.get_locations(&c.id)?;
+    let empty = Vec::new();
+    let features = data
+        .get("features")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    println!();
+    println!(
+        "Locations ({} total, showing {}):",
+        features.len(),
+        limit.min(features.len())
+    );
+    for feat in features.iter().take(limit) {
+        let fid = feat.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let props = feat.get("properties").cloned().unwrap_or_default();
+        let name = props
+            .get("name")
+            .or_else(|| props.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let coords = feat
+            .get("geometry")
+            .and_then(|g| g.get("coordinates"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let loc = if coords.len() >= 2 {
+            format!(
+                "  ({}, {})",
+                coords[0], coords[1]
+            )
+        } else {
+            String::new()
+        };
+        println!("  {fid}  {name}{loc}");
+    }
+    Ok(())
+}
+
+fn cmd_instances(query: Vec<String>, config: EdrConfig) -> Result<()> {
+    if !config.is_initialized() {
+        bail!("EDR not initialized. Run 'edr init <url>' first.");
+    }
+    if query.is_empty() {
+        bail!("instances requires a collection query");
+    }
+    let resolver = resolver_for(&config)?;
+    let resolved = resolver
+        .resolve(&query.join(" "))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let c = resolver.collection(resolved.collection);
+    println!("-> Collection: {}", c.id);
+    println!("Fetching instances...");
+    let client = ogcli_core::edr::client::EdrClient::new(config.server_url(), config.api_key());
+    let data = client.get_instances(&c.id)?;
+    let empty = Vec::new();
+    let list = data
+        .get("instances")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    println!();
+    println!("Instances ({}):", list.len());
+    for inst in list {
+        let iid = inst.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        let title = inst.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        println!("  {iid}  {title}");
+    }
+    Ok(())
+}
+
+fn cmd_url(
+    request_type: String,
+    query: Vec<String>,
+    opts: QueryOptionsArgs,
+    config: EdrConfig,
+) -> Result<()> {
+    if !config.is_initialized() {
+        bail!("EDR not initialized. Run 'edr init <url>' first.");
+    }
+    let valid = [
+        "collections", "position", "radius", "area", "cube",
+        "trajectory", "corridor", "locations", "instances",
+    ];
+    if !valid.contains(&request_type.as_str()) {
+        bail!("unknown request type '{request_type}' (one of: {})", valid.join(", "));
+    }
+    if request_type == "collections" {
+        println!(
+            "{}/collections",
+            config.server_url().trim_end_matches('/')
+        );
+        return Ok(());
+    }
+    if request_type == "locations" || request_type == "instances" {
+        if query.is_empty() {
+            bail!("{request_type} requires a collection query");
+        }
+        let resolver = resolver_for(&config)?;
+        let resolved = resolver
+            .resolve(&query.join(" "))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let c = resolver.collection(resolved.collection);
+        println!(
+            "{}/collections/{}/{request_type}",
+            config.server_url().trim_end_matches('/'),
+            c.id
+        );
+        return Ok(());
+    }
+    if query.is_empty() {
+        bail!("{request_type} requires a collection query");
+    }
+
+    // Reuse the query path in debug (URL-only) mode
+    let args = QueryArgs {
+        query,
+        coords: opts.coords,
+        bbox: opts.bbox,
+        datetime: opts.datetime,
+        z: opts.z,
+        param: opts.param,
+        crs: None,
+        format: None,
+        within: opts.within,
+        width: opts.width,
+        instance: None,
+        output: None,
+        debug: true,
+    };
+    cmd_query(&request_type, &args, config)
 }
