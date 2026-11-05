@@ -18,7 +18,8 @@ import click
 from .config import (
     load_edr_config, save_edr_config, init_from_server,
     get_collections_json, clear_edr_cache, fetch_collections,
-    EDR_CACHE_FILE, DEFAULT_CACHE_TTL,
+    refresh_active_profile, edr_cache_file, EDR_CACHE_DIR,
+    validate_profile_name,
 )
 from .parser import parse_collections, summarize_coverage
 from .client import EDRClient, corridor_params
@@ -26,6 +27,7 @@ from .resolver import (
     EDRResolver, AmbiguousCollectionError, parse_coords, bbox_to_wkt,
 )
 from .completions import complete_collection_names
+from .hammer import parse_duration
 from ..common.cache import ensure_config_dir, is_cache_valid
 
 
@@ -33,14 +35,31 @@ QUERY_TYPES = ['position', 'radius', 'area', 'cube', 'trajectory', 'corridor',
                'locations', 'instances']
 
 
-def get_resolver():
-    """Get EDR resolver from current config"""
-    config = load_edr_config()
+def complete_profile_names(ctx, param, incomplete):
+    """Complete saved EDR profile names."""
+    try:
+        from .config import load_edr_config
+        config = load_edr_config()
+        return [
+            click.shell_completion.CompletionItem(p, help="active" if p == config.active else "")
+            for p in sorted(config.profile_names())
+            if p.startswith(incomplete)
+        ]
+    except Exception:
+        return []
+
+
+def get_resolver(ctx: Optional[click.Context] = None):
+    """Get EDR resolver from current config (honoring a --profile override)"""
+    config = getattr(ctx, "obj", None) if ctx else None
+    if config is None:
+        config = load_edr_config()
     if not config.is_initialized():
+        active = config.active if config.profiles else None
         click.echo("Error: EDR not initialized. Run 'edr init <url>' first.", err=True)
         click.echo("\nExamples:", err=True)
         click.echo("  edr init https://folkweather.com/edr", err=True)
-        click.echo("  edr init http://localhost:8006/ogc/edr", err=True)
+        click.echo("  edr init http://localhost:8006/ogc/edr --save local", err=True)
         sys.exit(1)
 
     caps = parse_collections(get_collections_json(config), config.server_url)
@@ -66,58 +85,91 @@ def build_url(base_url: str, path: str, params: dict) -> str:
 
 
 @click.group(invoke_without_command=True)
+@click.option('--profile', '-p', default=None, metavar='NAME',
+              help='Use a saved server profile for this invocation',
+              shell_complete=complete_profile_names)
 @click.pass_context
-def cli(ctx):
+def cli(ctx, profile):
     """EDR query tool with fuzzy search (OGC API - Environmental Data Retrieval).
 
     Run 'edr' without arguments to see this help. (Interactive TUI coming later.)
     """
+    if profile:
+        config = load_edr_config()
+        if not config.has_profile(profile):
+            click.echo(f"Error: no profile named '{profile}'.", err=True)
+            click.echo(f"Saved profiles: {', '.join(config.profile_names()) or '(none)'}",
+                       err=True)
+            sys.exit(1)
+        config.active = profile
+        ctx.obj = config
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
 
 @cli.command()
-@click.argument('url')
+@click.argument('url', required=False)
 @click.option('--api-key', help='API key (or set EDR_API_KEY env var)')
+@click.option('--save', 'save_as', metavar='NAME', default=None,
+              help='Save as a named profile (and make it active)',
+              shell_complete=complete_profile_names)
 @click.option('--force', '-f', is_flag=True, help='Force re-initialization (clears cache)')
-def init(url, api_key, force):
+@click.pass_context
+def init(ctx, url, api_key, save_as, force):
     """Initialize EDR context from a server URL.
 
-    URL is the base of the EDR service (landing page or /collections parent).
+    With no URL, refreshes the active profile's collections.
 
     Examples:
         edr init https://folkweather.com/edr
-        edr init http://localhost:8006/ogc/edr/
-        edr init https://data.hub.api.metoffice.gov.uk/sites/v1/edr --api-key XXX
+        edr init http://localhost:8006/ogc/edr/ --save local
+        edr init https://data.hub.../edr --api-key XXX --save metoffice
+        edr init                  # refresh active profile
     """
     try:
         if force and clear_edr_cache():
             click.echo("✓ Cache cleared")
 
-        click.echo(f"Fetching collections from {url}...")
-        config = init_from_server(url, api_key or '')
+        if url:
+            click.echo(f"Fetching collections from {url}...")
+            config = init_from_server(
+                url, api_key or '',
+                config=getattr(ctx, 'obj', None) if ctx and ctx.obj else None,
+                save_as=save_as,
+            )
+            click.echo(f"✓ Initialized EDR profile '{config.active}'")
+        else:
+            config = refresh_active_profile(
+                getattr(ctx, 'obj', None) if ctx and ctx.obj else None
+            )
+            click.echo(f"✓ Refreshed profile '{config.active}'")
 
-        click.echo(f"✓ Initialized EDR context")
         click.echo(f"  Server: {config.server_url}")
 
         caps = parse_collections(get_collections_json(config), config.server_url)
         click.echo(f"  Collections: {len(caps.collections)}")
         click.echo(f"  Query types: {', '.join(caps.query_types)}")
 
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 @cli.command()
-def status():
+@click.pass_context
+def status(ctx):
     """Show current EDR configuration."""
-    config = load_edr_config()
+    config = getattr(ctx, 'obj', None) if ctx and ctx.obj else load_edr_config()
 
     if not config.is_initialized():
         click.echo("Not initialized. Run 'edr init <url>' first.")
         return
 
+    click.echo(f"Profile: {config.active}" +
+               (f" ({len(config.profiles)} saved)" if len(config.profiles) > 1 else ""))
     click.echo(f"Server: {config.server_url}")
     if config.api_key:
         click.echo("API key: set")
@@ -127,13 +179,72 @@ def status():
         click.echo(f"Collections: {len(caps.collections)}")
         click.echo(f"Query types: {', '.join(caps.query_types)}")
 
-        if EDR_CACHE_FILE.exists():
-            age_min = int((time.time() - EDR_CACHE_FILE.stat().st_mtime) / 60)
-            ttl = config.cache_ttl if config.cache_ttl > 0 else DEFAULT_CACHE_TTL
-            valid = is_cache_valid(EDR_CACHE_FILE, ttl)
+        cache = edr_cache_file(config)
+        if cache.exists():
+            age_min = int((time.time() - cache.stat().st_mtime) / 60)
+            ttl = config.cache_ttl if config.cache_ttl > 0 else 600
+            valid = is_cache_valid(cache, ttl)
             click.echo(f"Cache: {'valid' if valid else 'expired'} ({age_min} min old)")
     except Exception as e:
         click.echo(f"Error loading collections: {e}", err=True)
+
+
+# =============================================================================
+# Profiles
+# =============================================================================
+
+@cli.command('profiles')
+def profiles_cmd():
+    """List saved server profiles (* = active).
+
+    Examples:
+        edr profiles
+        edr init https://folkweather.com/edr --save folkweather
+        edr set profile local
+    """
+    config = load_edr_config()
+    if not config.profiles:
+        click.echo("No saved profiles. Save one with: edr init <url> --save NAME")
+        return
+
+    for name in sorted(config.profiles):
+        p = config.profiles[name]
+        marker = "*" if name == config.active else " "
+        key = "  (api key set)" if p.api_key else ""
+        click.echo(f"{marker} {name:20} {p.server_url}{key}")
+
+
+@cli.group('set')
+def set_cmd():
+    """Set configuration values."""
+    pass
+
+
+@set_cmd.command('profile')
+@click.argument('name', required=False, shell_complete=complete_profile_names)
+def set_profile(name):
+    """Set the active server profile (persists until changed).
+
+    With no name, shows available profiles.
+    """
+    config = load_edr_config()
+
+    if not name:
+        for pname in sorted(config.profiles):
+            p = config.profiles[pname]
+            marker = "*" if pname == config.active else " "
+            click.echo(f"{marker} {pname:20} {p.server_url}")
+        return
+
+    if not config.has_profile(name):
+        click.echo(f"Error: no profile named '{name}'.", err=True)
+        click.echo(f"Saved profiles: {', '.join(sorted(config.profiles)) or '(none)'}",
+                   err=True)
+        sys.exit(1)
+
+    config.set_active(name)
+    save_edr_config(config)
+    click.echo(f"✓ Active profile: {name} ({config.profile(name).server_url})")
 
 
 # =============================================================================
@@ -147,7 +258,8 @@ def status():
 @click.option('--verbose', '-v', is_flag=True, help='Show query types, extent and parameters')
 @click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
 @click.option('--count', is_flag=True, help='Just show count of matching collections')
-def collections(query, limit, show_all, verbose, as_json, count):
+@click.pass_context
+def collections(ctx, query, limit, show_all, verbose, as_json, count):
     """List available collections, optionally fuzzy-filtered.
 
     Examples:
@@ -156,7 +268,7 @@ def collections(query, limit, show_all, verbose, as_json, count):
         edr collections guam -v
         edr collections --json
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query) if query else None
 
     try:
@@ -229,14 +341,15 @@ def collections(query, limit, show_all, verbose, as_json, count):
 
 @cli.command()
 @click.argument('query', nargs=-1, required=True, shell_complete=complete_collection_names)
-def describe(query):
+@click.pass_context
+def describe(ctx, query):
     """Show detailed information about a collection.
 
     Examples:
         edr describe hrrr surface
         edr describe hrrr-isobaric
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -324,11 +437,11 @@ def common_query_options(require_geometry=True):
     return decorator
 
 
-def run_edr_query(query_type, query, coords=None, bbox=None, datetime_=None, z_=None,
+def run_edr_query(query_type, query, ctx=None, coords=None, bbox=None, datetime_=None, z_=None,
                   param=None, crs=None, format_=None, within=None, width=None,
                   instance=None, output=None, debug=False):
     """Shared implementation for all EDR query commands."""
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -511,7 +624,8 @@ def _report_response(body: bytes, content_type: str, collection_id: str,
 
 @cli.command()
 @common_query_options()
-def position(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def position(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
              instance, output, debug):
     """Point query (coords=POINT).
 
@@ -520,14 +634,15 @@ def position(query, coords, bbox, datetime_, z_, param, crs, format_, within, wi
         edr position hrrr surface temp -c -105,40 -t 6h
         edr position hrrr isobaric -c POINT(-105 40) -z 850
     """
-    run_edr_query('position', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('position', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
 
 @cli.command()
 @common_query_options()
-def radius(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def radius(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
            instance, output, debug):
     """Radius query (coords=POINT + within).
 
@@ -537,14 +652,15 @@ def radius(query, coords, bbox, datetime_, z_, param, crs, format_, within, widt
     if not within:
         click.echo("Error: radius query requires --within (e.g. --within 25km)", err=True)
         sys.exit(1)
-    run_edr_query('radius', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('radius', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
 
 @cli.command()
 @common_query_options()
-def area(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def area(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
          instance, output, debug):
     """Area query (coords=POLYGON or --bbox).
 
@@ -552,28 +668,30 @@ def area(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
         edr area glm lightning --bbox -105,39,-104,41
         edr area hrrr surface -c "POLYGON((-105 39, -104 39, -104 41, -105 41, -105 39))"
     """
-    run_edr_query('area', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('area', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
 
 @cli.command()
 @common_query_options()
-def cube(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def cube(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
          instance, output, debug):
     """Cube query (bbox + vertical + time).
 
     Examples:
         edr cube hrrr isobaric --bbox -110,38,-100,44 -z 500/850 -t latest
     """
-    run_edr_query('cube', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('cube', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
 
 @cli.command()
 @common_query_options()
-def trajectory(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def trajectory(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
                instance, output, debug):
     """Trajectory query (coords=LINESTRING).
 
@@ -584,14 +702,15 @@ def trajectory(query, coords, bbox, datetime_, z_, param, crs, format_, within, 
     if not (coords or bbox):
         click.echo("Error: trajectory requires --coords (two or more points)", err=True)
         sys.exit(1)
-    run_edr_query('trajectory', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('trajectory', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
 
 @cli.command()
 @common_query_options()
-def corridor(query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
+@click.pass_context
+def corridor(ctx, query, coords, bbox, datetime_, z_, param, crs, format_, within, width,
              instance, output, debug):
     """Corridor query (LINESTRING + width).
 
@@ -604,7 +723,7 @@ def corridor(query, coords, bbox, datetime_, z_, param, crs, format_, within, wi
     if not (coords or bbox):
         click.echo("Error: corridor requires --coords (two or more points)", err=True)
         sys.exit(1)
-    run_edr_query('corridor', query, coords=coords, bbox=bbox, datetime_=datetime_,
+    run_edr_query('corridor', query, ctx=ctx, coords=coords, bbox=bbox, datetime_=datetime_,
                   z_=z_, param=param, crs=crs, format_=format_, within=within,
                   width=width, instance=instance, output=output, debug=debug)
 
@@ -622,7 +741,8 @@ def corridor(query, coords, bbox, datetime_, z_, param, crs, format_, within, wi
 @click.option('--limit', '-n', default=20, help='Max locations to list')
 @click.option('--output', '-o', default=None, help='Output filename (with --id)')
 @click.option('--debug', '-d', is_flag=True, help='Show URL without fetching')
-def locations(query, location_id, datetime_, z_, param, limit, output, debug):
+@click.pass_context
+def locations(ctx, query, location_id, datetime_, z_, param, limit, output, debug):
     """List named locations for a collection (or fetch one with --id).
 
     Examples:
@@ -630,7 +750,7 @@ def locations(query, location_id, datetime_, z_, param, limit, output, debug):
         edr locations populated --id denver_co
         edr locations metar -n 5
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -677,14 +797,15 @@ def locations(query, location_id, datetime_, z_, param, limit, output, debug):
 
 @cli.command()
 @click.argument('query', nargs=-1, required=True, shell_complete=complete_collection_names)
-def instances(query):
+@click.pass_context
+def instances(ctx, query):
     """List model-run instances for a collection.
 
     Examples:
         edr instances hrrr surface
         edr instances gfswave
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -739,7 +860,8 @@ def _get_query_commands():
 @click.option('--param', '-p', default=None, help='Parameter name(s)')
 @click.option('--within', default=None, help='Radius distance')
 @click.option('--width', default=None, help='Corridor width')
-def url(request_type, query, coords, bbox, datetime_, z_, param, within, width):
+@click.pass_context
+def url(ctx, request_type, query, coords, bbox, datetime_, z_, param, within, width):
     """Build an EDR URL without fetching.
 
     Examples:
@@ -748,7 +870,7 @@ def url(request_type, query, coords, bbox, datetime_, z_, param, within, width):
         edr url radius metar -c -105,40 --within 25km
         edr url instances hrrr surface
     """
-    config = load_edr_config()
+    config = getattr(ctx, 'obj', None) if ctx and ctx.obj else load_edr_config()
 
     if not config.is_initialized():
         click.echo("Error: EDR not initialized. Run 'edr init <url>' first.", err=True)
@@ -762,7 +884,7 @@ def url(request_type, query, coords, bbox, datetime_, z_, param, within, width):
         if not query:
             click.echo(f"Error: {request_type} requires a collection query", err=True)
             sys.exit(1)
-        resolver, _ = get_resolver()
+        resolver, _ = get_resolver(ctx)
         try:
             resolved = resolver.resolve(' '.join(query))
             click.echo(build_url(config.server_url,
@@ -802,11 +924,20 @@ def url(request_type, query, coords, bbox, datetime_, z_, param, within, width):
 @click.option('--max-levels', default=0, help='Sample N vertical levels (0=all)')
 @click.option('--points', default=1, help='Random points per collection')
 @click.option('--limit', '-n', default=0, help='Cap total requests (0=unlimited)')
+@click.option('--duration', '-D', default=None, metavar='T',
+              help='Run for a wall-clock window (e.g. 30s, 5m), cycling requests')
+@click.option('--rps', default=0.0, type=float, metavar='N',
+              help='Pace to N requests/second (default: as fast as possible)')
+@click.option('--warmup', default=0, type=int, metavar='N',
+              help='Exclude the first N requests from latency stats')
+@click.option('--report', 'report_path', default=None, metavar='PATH',
+              help='Write machine-readable results JSON to PATH')
 @click.option('--output', '-o', default='edr_hammer_output', help='Output directory')
 @click.option('--no-save', is_flag=True, help='Do not save response bodies')
 @click.option('--dry-run', is_flag=True, help='Show requests without executing')
-def hammer(query, workers, query_type, max_timesteps, max_params, max_levels,
-           points, limit, output, no_save, dry_run):
+@click.pass_context
+def hammer(ctx, query, workers, query_type, max_timesteps, max_params, max_levels,
+           points, limit, duration, rps, warmup, report_path, output, no_save, dry_run):
     """Hammer all collections matching query with a full dimension sweep.
 
     Enumerates matching collections × parameters × timesteps × z-levels
@@ -816,9 +947,17 @@ def hammer(query, workers, query_type, max_timesteps, max_params, max_levels,
         edr hammer hrrr
         edr hammer guam --dry-run
         edr hammer hrrr isobaric -w 10 --max-timesteps 8 --limit 100
+        edr hammer hrrr --rps 50 --duration 30s
+        edr hammer guam --warmup 5 --report run.json
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
+
+    try:
+        duration_s = parse_duration(duration) if duration else 0.0
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     try:
         results = resolver.list_collections(query_str, limit=200)
@@ -856,11 +995,21 @@ def hammer(query, workers, query_type, max_timesteps, max_params, max_levels,
             max_levels=max_levels,
             points=points,
             limit=limit,
+            duration=duration_s,
+            rps=rps,
+            warmup=warmup,
         )
 
         hammer_instance.generate()
-        click.echo(f"\nGenerated {len(hammer_instance.requests)} requests "
-                   f"(query: {query_type}, workers: {workers})")
+        if dry_run or not duration_s:
+            click.echo(f"\nGenerated {len(hammer_instance.requests)} requests "
+                       f"(query: {query_type}, workers: {workers})")
+        else:
+            click.echo(f"\nRunning for {duration_s:.0f}s over "
+                       f"{len(hammer_instance.requests)} generated requests "
+                       f"(cycling, query: {query_type})")
+        if rps:
+            click.echo(f"Paced at {rps:g} req/s")
         if dry_run:
             click.echo("(dry run - no requests will be made)")
 
@@ -869,6 +1018,11 @@ def hammer(query, workers, query_type, max_timesteps, max_params, max_levels,
         if not dry_run:
             click.echo(f"\n{'=' * 50}")
             click.echo(stats.report())
+            if report_path:
+                Path(report_path).write_text(
+                    json.dumps(stats.to_report_dict(), indent=2) + "\n"
+                )
+                click.echo(f"\n✓ Report saved: {report_path}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -887,56 +1041,52 @@ def cache():
 
 @cache.command('status')
 def cache_status():
-    """Show EDR cache status."""
+    """Show EDR cache status (all profiles)."""
     config = load_edr_config()
 
-    if not config.is_initialized():
+    if not config.profiles:
         click.echo("Not initialized. Run 'edr init <url>' first.")
         return
 
-    click.echo(f"Cache file: {EDR_CACHE_FILE}")
-
-    if EDR_CACHE_FILE.exists():
-        ttl = config.cache_ttl if config.cache_ttl > 0 else DEFAULT_CACHE_TTL
-        age_seconds = time.time() - EDR_CACHE_FILE.stat().st_mtime
-        remaining = max(0, ttl - age_seconds)
-
-        click.echo(f"Cache age: {int(age_seconds / 60)} minutes")
-        if is_cache_valid(EDR_CACHE_FILE, ttl):
-            click.echo(f"Status: valid ({int(remaining / 60)} min remaining)")
+    for name in sorted(config.profiles):
+        cache_path = edr_cache_file(config, name)
+        marker = "*" if name == config.active else " "
+        if cache_path.exists():
+            ttl = config.profiles[name].cache_ttl or DEFAULT_CACHE_TTL
+            age_seconds = time.time() - cache_path.stat().st_mtime
+            valid = is_cache_valid(cache_path, ttl)
+            click.echo(
+                f"{marker} {name:20} {'valid' if valid else 'expired'}  "
+                f"{int(age_seconds / 60)} min old  "
+                f"{cache_path.stat().st_size / 1024:.1f} KB"
+            )
         else:
-            click.echo("Status: expired")
-        click.echo(f"Size: {EDR_CACHE_FILE.stat().st_size / 1024:.1f} KB")
-    else:
-        click.echo("Status: no cache file")
+            click.echo(f"{marker} {name:20} no cache")
 
 
 @cache.command('clear')
 def cache_clear():
-    """Clear the EDR collections cache."""
+    """Clear ALL EDR collections caches (all profiles)."""
     if clear_edr_cache():
-        click.echo("✓ EDR cache cleared")
+        click.echo("✓ EDR caches cleared")
     else:
         click.echo("No EDR cache to clear")
 
 
 @cache.command('refresh')
 def cache_refresh():
-    """Force refresh collections from server."""
+    """Force refresh collections for the active profile from the server."""
     config = load_edr_config()
 
     if not config.is_initialized():
         click.echo("Error: EDR not initialized. Run 'edr init <url>' first.", err=True)
         sys.exit(1)
 
-    click.echo(f"Fetching collections from {config.server_url}...")
+    click.echo(f"Fetching collections for profile '{config.active}' "
+               f"from {config.server_url}...")
     try:
-        content = fetch_collections(config.server_url, config.api_key)
-        ensure_config_dir()
-        with open(EDR_CACHE_FILE, 'w', encoding='utf-8') as f:
-            f.write(content)
-
-        caps = parse_collections(content, config.server_url)
+        refresh_active_profile(config)
+        caps = parse_collections(get_collections_json(config), config.server_url)
         click.echo(f"✓ Cache refreshed ({len(caps.collections)} collections)")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

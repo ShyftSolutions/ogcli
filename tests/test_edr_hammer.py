@@ -132,6 +132,102 @@ def test_render_status_smoke():
     assert panel is not None
 
 
+def test_parse_duration():
+    from src.edr.hammer import parse_duration
+    assert parse_duration("30s") == 30.0
+    assert parse_duration("5m") == 300.0
+    assert parse_duration("2h") == 7200.0
+    assert parse_duration("45") == 45.0
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        parse_duration("banana")
+    with _pytest.raises(ValueError):
+        parse_duration("")
+
+
+def test_warmup_exclusion():
+    stats = HammerStats()
+    stats.record(True, 100, 0.9, 200, is_warmup=True)   # warmup
+    stats.record(True, 100, 0.1, 200)
+    stats.record(True, 100, 0.3, 200)
+    assert stats.warmup == 1
+    assert stats.success == 3
+    assert len(stats.latencies) == 2          # warmup excluded
+    assert stats.latencies == [0.9 * 0 + 0.1, 0.3][0:2] or sorted(stats.latencies) == [0.1, 0.3]
+    ms = stats._latency_summary_ms()
+    assert ms["min"] == 100.0 and ms["max"] == 300.0
+
+
+def test_histogram_lines():
+    stats = HammerStats()
+    for lat in [0.1, 0.1, 0.1, 0.2, 0.3]:
+        stats.record(True, 0, lat, 200)
+    lines = stats.histogram(buckets=4)
+    assert len(lines) == 4
+    assert "│" in lines[0]
+    # Counts sum to the number of recorded latencies
+    total = sum(int(line.split()[-1]) for line in lines)
+    assert total == 5
+
+
+def test_report_dict():
+    stats = HammerStats()
+    stats.start, stats.end = 0.0, 2.0
+    stats.total = 4
+    stats.record(True, 1024, 0.1, 200)
+    stats.record(True, 1024, 0.3, 200)
+    stats.record(False, 0, 0.2, 500)
+    stats.record(True, 1024, 0.1, 200, is_warmup=True)
+
+    report = stats.to_report_dict()
+    assert report["total"] == 4
+    assert report["ok"] == 3 and report["failed"] == 1
+    assert report["warmup_excluded"] == 1
+    assert report["status_counts"] == {"200": 3, "500": 1}
+    assert report["rps_actual"] == 2.0
+    assert report["latency_ms"]["p50"] == 200.0
+
+
+def test_duration_mode_with_pacing(monkeypatch):
+    """Duration-bounded cycling run with fake requests (no network)."""
+    import itertools
+    counter = itertools.count()
+
+    def fake_execute(self, request):
+        n = next(counter)
+        return (request.label, True, 0.001, 10, None, 200)
+
+    monkeypatch.setattr(EDRHammer, "_execute", fake_execute)
+
+    hammer = make_hammer(save=False, duration=0.4, rps=100,
+                         warmup=2, limit=10_000)
+    hammer.generate()
+    assert len(hammer.requests) > 0
+
+    stats = hammer.run()
+    # ~40 requests at 100 rps over 0.4s; allow generous scheduling slack
+    assert 15 <= stats.total <= 60
+    assert stats.warmup == 2
+    assert stats.failed == 0
+    assert len(stats.latencies) == stats.total - 2
+
+
+def test_limit_cap_applies_in_duration_mode(monkeypatch):
+    import itertools
+    counter = itertools.count()
+
+    def fake_execute(self, request):
+        next(counter)
+        return (request.label, True, 0.001, 10, None, 200)
+
+    monkeypatch.setattr(EDRHammer, "_execute", fake_execute)
+
+    hammer = make_hammer(save=False, duration=5, limit=7)
+    hammer.generate()
+    stats = hammer.run()
+    assert stats.total == 7
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

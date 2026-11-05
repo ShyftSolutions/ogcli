@@ -146,25 +146,53 @@ Query OGC API - Environmental Data Retrieval servers: browse **collections** (in
 ## Quick Start
 
 ```bash
-# Initialize with an EDR server
+# Initialize with an EDR server (first one becomes the default)
 edr init https://folkweather.com/edr
-edr init http://localhost:8006/ogc/edr/
 
 # Search collections
 edr collections hrrr
 
-# Get collection details (extent, parameters, query types)
-edr describe hrrr isobaric
-
-# Point query (auto-resolves collection + parameter)
+# Fetch data with natural syntax
 edr position hrrr surface temp -c -105,40
 ```
+
+## Server Profiles
+
+Save multiple servers and switch between them. The active profile persists until you change it.
+
+```bash
+# Save named profiles
+edr init https://folkweather.com/edr --save folkweather
+edr init http://localhost:8006/ogc/edr --save local
+
+wms init https://ogc.shyftwx.com/ogc/WMS --save prod
+
+# List (* = active)
+edr profiles
+wms profiles
+
+# Switch the active profile (persists)
+edr set profile local
+wms set profile prod
+
+# One-off against another profile without switching
+edr --profile folkweather collections hrrr
+wms -p prod map gfs temp
+
+# Refresh the active profile's collections/capabilities
+edr init
+wms init
+```
+
+Notes: profile names allow letters/numbers/`-`/`_`. Each profile has its own cache, so switching servers never serves stale data. Existing single-server configs migrate automatically to a `default` profile.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `edr init <url>` | Initialize from an EDR server (fetches /collections) |
+| `edr init [url]` | Initialize from an EDR server (no URL = refresh active profile) |
+| `edr profiles` | List saved server profiles |
+| `edr set profile <name>` | Switch the active profile |
 | `edr status` | Show configuration |
 | `edr collections [query]` | List/search collections |
 | `edr describe <query>` | Show collection details |
@@ -226,8 +254,78 @@ edr hammer guam --dry-run                          # preview request URLs
 edr hammer hrrr isobaric -w 10 \
     --max-timesteps 8 --max-levels 3 --limit 200   # capped sweep
 edr hammer hrrr --query-type cube                  # sweep with cube queries
+
+# Paced + duration-bounded runs
+edr hammer guam --rps 50 --duration 30s            # 50 req/s for 30s (cycling)
+edr hammer guam --warmup 5 --report run.json       # stats JSON for diffing runs
 ```
 
-Output: success/fail counts, throughput, latency percentiles (avg/p50/p95/max). Responses saved to `edr_hammer_output/` unless `--no-save`.
+Key options:
+- `--rps N` — pace to a target request rate (default: as fast as possible)
+- `--duration T` — run for a wall-clock window (`30s`, `5m`), cycling the request list
+- `--warmup N` — exclude the first N requests from latency stats
+- `--report PATH` — write machine-readable results JSON
+- `--limit N` — hard cap on total requests (always applies)
+
+Output: ok/fail counts, status-code breakdown, throughput, latency percentiles + histogram. Responses saved to `edr_hammer_output/` unless `--no-save`.
 
 While running, a live status panel shows the progress bar, ok/fail counts, req/s, latency, data received, and the most recent requests (status code, payload size, duration). Non-TTY sessions get plain progress lines instead.
+
+---
+
+# MCP Server
+
+An MCP (Model Context Protocol) server exposes the same WMS + EDR tooling to LLM agents (Claude Code, Claude Desktop, etc.). It runs on the same core as the CLIs and shares their config and caches in `~/.wms/`.
+
+## Setup
+
+```bash
+# Install with the mcp extra (adds the official mcp package)
+pip install -e ".[mcp]"
+```
+
+This installs the `ogcli-mcp` command (stdio transport).
+
+### Claude Code
+
+```bash
+claude mcp add ogcli -- /path/to/ogcli/venv/bin/ogcli-mcp
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ogcli": {
+      "command": "/path/to/ogcli/venv/bin/ogcli-mcp"
+    }
+  }
+}
+```
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `edr_status` / `wms_status` | Show current server config |
+| `edr_init` / `wms_init` | Point at a server (shared with CLI config) |
+| `edr_collections(query)` | Fuzzy-search EDR collections |
+| `edr_describe(query)` | Collection detail: extent, params, query types |
+| `edr_query(query, type, ...)` | Run any EDR query; returns a compact summary + saved payload path |
+| `edr_instances(query)` | List model-run instances |
+| `edr_locations(query, id?)` | List named locations or fetch one |
+| `edr_hammer(query, ...)` | Load test — **dry-run preview by default** |
+| `wms_layers(query)` | Fuzzy-search WMS layers |
+| `wms_describe(query)` | Layer detail: dimensions, styles, bbox |
+| `wms_map(query)` | GetMap — returns an inline PNG the model can view |
+| `wms_url(type, query)` | Build a WMS URL without fetching |
+| `wms_hammer(query, ...)` | Load test — **dry-run preview by default** |
+
+Agents get natural syntax for free: `edr_query("hrrr surface temp", coords="-105,40", z="850")` resolves the collection *and* parameter. All tools accept an optional `profile` parameter to target a saved server profile (default: active).
+
+Notes for agent use:
+- EDR responses are summarized (axes + value ranges); full payloads are saved to `~/.wms/mcp_output/` and the path is returned
+- The hammer tools default to `dry_run=true` and are hard-capped at 500 requests / 64 workers per call; the server instructions tell agents to preview first and confirm large runs with the user

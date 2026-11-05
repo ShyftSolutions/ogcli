@@ -13,7 +13,8 @@ import click
 
 from .config import (
     load_config, save_config, get_capabilities_xml,
-    init_from_file, init_from_server, WMSConfig,
+    init_from_file, init_from_server, refresh_active_profile,
+    validate_profile_name, caps_cache_file, WMSConfig,
     clear_cache, is_cache_valid, CAPS_CACHE_FILE, DEFAULT_CACHE_TTL,
     fetch_capabilities_xml, ensure_config_dir
 )
@@ -25,9 +26,25 @@ from .completions import complete_layer_names, complete_group_names
 from ..common.display import display_image
 
 
-def get_resolver():
-    """Get resolver from current config"""
-    config = load_config()
+def complete_profile_names(ctx, param, incomplete):
+    """Complete saved WMS profile names."""
+    try:
+        from .config import load_config as _load
+        config = _load()
+        return [
+            click.shell_completion.CompletionItem(p, help="active" if p == config.active else "")
+            for p in sorted(config.profile_names())
+            if p.startswith(incomplete)
+        ]
+    except Exception:
+        return []
+
+
+def get_resolver(ctx=None):
+    """Get resolver from current config (honoring a --profile override)"""
+    config = getattr(ctx, "obj", None) if ctx else None
+    if config is None:
+        config = load_config()
     if not config.is_initialized():
         click.echo("Error: WMS not initialized. Run 'wms init <source>' first.", err=True)
         click.echo("\nExamples:", err=True)
@@ -49,12 +66,24 @@ def sanitize_filename(name: str) -> str:
 
 
 @click.group(invoke_without_command=True)
+@click.option('--profile', '-p', default=None, metavar='NAME',
+              help='Use a saved server profile for this invocation',
+              shell_complete=complete_profile_names)
 @click.pass_context
-def cli(ctx):
+def cli(ctx, profile):
     """WMS query tool with fuzzy search.
 
     Run without arguments to open interactive TUI.
     """
+    if profile:
+        config = load_config()
+        if not config.has_profile(profile):
+            click.echo(f"Error: no profile named '{profile}'.", err=True)
+            click.echo(f"Saved profiles: {', '.join(config.profile_names()) or '(none)'}",
+                       err=True)
+            sys.exit(1)
+        config.active = profile
+        ctx.obj = config
     if ctx.invoked_subcommand is None:
         # Launch TUI
         try:
@@ -72,19 +101,23 @@ def cli(ctx):
 
 
 @cli.command()
-@click.argument('source')
+@click.argument('source', required=False)
 @click.option('--server', '-s', help='Server URL for requests (when source is local file)')
+@click.option('--save', 'save_as', metavar='NAME', default=None,
+              help='Save as a named profile (and make it active)')
 @click.option('--force', '-f', is_flag=True, help='Force re-initialization (clears cache)')
-def init(source, server, force):
+@click.pass_context
+def init(ctx, source, server, save_as, force):
     """Initialize WMS context from file or server.
 
-    SOURCE can be a local file path or HTTP URL.
+    SOURCE can be a local file path or HTTP URL. With no SOURCE,
+    refreshes the active profile's capabilities.
 
     Examples:
-        wms init ./capabilities.xml
         wms init http://localhost:8008/ogc/AFW_WMS
-        wms init ./caps.xml --server http://prod-server/wms
-        wms init http://server/wms --force
+        wms init http://server/wms --save prod
+        wms init ./capabilities.xml --server http://prod-server/wms
+        wms init                   # refresh active profile
     """
     try:
         # Clear cache if force flag is set
@@ -92,16 +125,21 @@ def init(source, server, force):
             if clear_cache():
                 click.echo("✓ Cache cleared")
 
-        if source.startswith('http://') or source.startswith('https://'):
+        existing = getattr(ctx, 'obj', None) if ctx and ctx.obj else None
+
+        if not source:
+            config = refresh_active_profile(existing)
+            click.echo(f"✓ Refreshed profile '{config.active}'")
+        elif source.startswith('http://') or source.startswith('https://'):
             # Initialize from server
             click.echo(f"Fetching capabilities from {source}...")
-            config = init_from_server(source)
-            click.echo("✓ Fetched capabilities from server")
+            config = init_from_server(source, config=existing, save_as=save_as)
+            click.echo(f"✓ Initialized profile '{config.active}' from server")
         else:
             # Initialize from local file
             click.echo(f"Loading capabilities from {source}...")
-            config = init_from_file(source, server)
-            click.echo("✓ Initialized from local file")
+            config = init_from_file(source, server, config=existing, save_as=save_as)
+            click.echo(f"✓ Initialized profile '{config.active}' from local file")
 
         # Show summary
         xml_content = get_capabilities_xml(config)
@@ -116,20 +154,26 @@ def init(source, server, force):
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
 @cli.command()
-def status():
+@click.pass_context
+def status(ctx):
     """Show current WMS configuration."""
-    config = load_config()
+    config = getattr(ctx, 'obj', None) if ctx and ctx.obj else load_config()
 
     if not config.is_initialized():
         click.echo("Not initialized. Run 'wms init <source>' first.")
         return
 
+    click.echo(f"Profile: {config.active}" +
+               (f" ({len(config.profiles)} saved)" if len(config.profiles) > 1 else ""))
     click.echo(f"Source: {config.source_path}")
     click.echo(f"Type: {config.source_type}")
 
@@ -144,6 +188,63 @@ def status():
         click.echo(f"Service: {caps.service_title}")
     except Exception as e:
         click.echo(f"Error loading capabilities: {e}", err=True)
+
+
+# =============================================================================
+# Profiles
+# =============================================================================
+
+@cli.command('profiles')
+def profiles_cmd():
+    """List saved server profiles (* = active).
+
+    Examples:
+        wms profiles
+        wms init http://my-server/wms --save prod
+        wms set profile prod
+    """
+    config = load_config()
+    if not config.profiles:
+        click.echo("No saved profiles. Save one with: wms init <source> --save NAME")
+        return
+
+    for name in sorted(config.profiles):
+        p = config.profiles[name]
+        marker = "*" if name == config.active else " "
+        click.echo(f"{marker} {name:20} {p.source_path}")
+
+
+@cli.group('set')
+def set_cmd():
+    """Set configuration values."""
+    pass
+
+
+@set_cmd.command('profile')
+@click.argument('name', required=False, shell_complete=complete_profile_names)
+def set_profile(name):
+    """Set the active server profile (persists until changed).
+
+    With no name, shows available profiles.
+    """
+    config = load_config()
+
+    if not name:
+        for pname in sorted(config.profiles):
+            p = config.profiles[pname]
+            marker = "*" if pname == config.active else " "
+            click.echo(f"{marker} {pname:20} {p.source_path}")
+        return
+
+    if not config.has_profile(name):
+        click.echo(f"Error: no profile named '{name}'.", err=True)
+        click.echo(f"Saved profiles: {', '.join(sorted(config.profiles)) or '(none)'}",
+                   err=True)
+        sys.exit(1)
+
+    config.set_active(name)
+    save_config(config)
+    click.echo(f"✓ Active profile: {name} ({config.profile(name).source_path})")
 
 
 def build_url(base_url: str, params: dict) -> str:
