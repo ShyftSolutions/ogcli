@@ -264,7 +264,8 @@ def build_url(base_url: str, params: dict) -> str:
 @click.option('--format', 'img_format', default='image/png', help='Image format')
 @click.option('--style', help='Style name (default: layer default)')
 @click.option('--debug', '-d', is_flag=True, help='Show resolved URL without fetching')
-def map(query, output, display, width, height, bbox, crs, img_format, style, debug):
+@click.pass_context
+def map(ctx, query, output, display, width, height, bbox, crs, img_format, style, debug):
     """Fetch a map image (GetMap).
 
     QUERY is fuzzy-matched to find the best layer.
@@ -276,7 +277,7 @@ def map(query, output, display, width, height, bbox, crs, img_format, style, deb
         wms map gfs temp --bbox -125,24,-66,50
         wms map gfs temp --debug
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -393,7 +394,8 @@ def map(query, output, display, width, height, bbox, crs, img_format, style, deb
 @click.option('--display', '-D', is_flag=True, help='Display image in terminal using Unicode')
 @click.option('--zoom', '-z', default=3, help='Tile zoom level')
 @click.option('--debug', '-d', is_flag=True, help='Show resolved URL without fetching')
-def tile(query, output, display, zoom, debug):
+@click.pass_context
+def tile(ctx, query, output, display, zoom, debug):
     """Fetch a random tile (GetGTile).
 
     QUERY is fuzzy-matched to find the best layer.
@@ -404,7 +406,7 @@ def tile(query, output, display, zoom, debug):
         wms tile hrrr --zoom 5
         wms tile gfs temp --debug
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -512,7 +514,8 @@ def tile(query, output, display, zoom, debug):
 @click.option('--output', '-o', help='Output filename')
 @click.option('--display', '-D', is_flag=True, help='Display image in terminal using Unicode')
 @click.option('--debug', '-d', is_flag=True, help='Show resolved URL without fetching')
-def legend(query, output, display, debug):
+@click.pass_context
+def legend(ctx, query, output, display, debug):
     """Fetch legend graphic for a layer.
 
     Examples:
@@ -520,7 +523,7 @@ def legend(query, output, display, debug):
         wms legend galwem cloud
         wms legend hrrr --debug
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -605,7 +608,8 @@ def legend(query, output, display, debug):
 @click.option('--verbose', '-v', is_flag=True, help='Show dimensions and styles')
 @click.option('--json', 'as_json', is_flag=True, help='Output as JSON')
 @click.option('--count', is_flag=True, help='Just show count of matching layers')
-def layers(query, limit, show_all, verbose, as_json, count):
+@click.pass_context
+def layers(ctx, query, limit, show_all, verbose, as_json, count):
     """List available layers, optionally filtered.
 
     Examples:
@@ -615,7 +619,7 @@ def layers(query, limit, show_all, verbose, as_json, count):
         wms layers --json       # JSON output
         wms layers gfs --count  # Just count
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query) if query else None
 
     try:
@@ -697,7 +701,8 @@ def layers(query, limit, show_all, verbose, as_json, count):
 @click.option('--workers', '-w', default=20, help='Number of parallel workers')
 @click.option('--dry-run', is_flag=True, help='Show requests without executing')
 @click.option('--output', '-o', default='wms_output', help='Output directory')
-def hammer(query, workers, dry_run, output):
+@click.pass_context
+def hammer(ctx, query, workers, dry_run, output):
     """Hammer all layers matching query.
 
     Generates all dimension combinations and fetches them in parallel.
@@ -707,7 +712,7 @@ def hammer(query, workers, dry_run, output):
         wms hammer galwem cloud
         wms hammer hrrr --workers 10
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -865,7 +870,8 @@ def cache_refresh():
 
 @cli.command()
 @click.argument('query', nargs=-1, required=True, shell_complete=complete_layer_names)
-def describe(query):
+@click.pass_context
+def describe(ctx, query):
     """Show detailed information about a layer.
 
     Examples:
@@ -873,7 +879,7 @@ def describe(query):
         wms describe gfs temp f
         wms describe GALWEM_CloudBase
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -953,7 +959,8 @@ def describe(query):
 @click.option('--width', '-w', default=800, help='Image width (for map)')
 @click.option('--height', '-h', default=600, help='Image height (for map)')
 @click.option('--zoom', '-z', default=3, help='Tile zoom level (for tile)')
-def url(request_type, query, width, height, zoom):
+@click.pass_context
+def url(ctx, request_type, query, width, height, zoom):
     """Build a WMS URL without fetching.
 
     Examples:
@@ -962,7 +969,7 @@ def url(request_type, query, width, height, zoom):
         wms url tile galwem cloud -z 5
         wms url legend hrrr precip
     """
-    config = load_config()
+    config = getattr(ctx, 'obj', None) if ctx and ctx.obj else load_config()
 
     if not config.is_initialized():
         click.echo("Error: WMS not initialized. Run 'wms init <source>' first.", err=True)
@@ -982,7 +989,7 @@ def url(request_type, query, width, height, zoom):
         click.echo(f"Error: {request_type} requires a query", err=True)
         sys.exit(1)
 
-    resolver, _ = get_resolver()
+    resolver, _ = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
@@ -1089,7 +1096,8 @@ def build_layer_tree(capabilities):
 @click.argument('pattern', required=False, shell_complete=complete_group_names)
 @click.option('--tree', 'as_tree', is_flag=True, help='Show as hierarchical tree')
 @click.option('--counts', is_flag=True, help='Show layer counts per group')
-def groups(pattern, as_tree, counts):
+@click.pass_context
+def groups(ctx, pattern, as_tree, counts):
     """List layer groups/hierarchy.
 
     Examples:
@@ -1166,7 +1174,8 @@ def groups(pattern, as_tree, counts):
 @click.option('--dry-run', is_flag=True, help='Show what would be downloaded')
 @click.option('--list', 'list_only', is_flag=True, help='Just list matching layers')
 @click.option('--limit', '-n', type=int, help='Max layers to process')
-def batch(query, output, workers, dry_run, list_only, limit):
+@click.pass_context
+def batch(ctx, query, output, workers, dry_run, list_only, limit):
     """Fetch all layers matching a group pattern.
 
     Unlike hammer (performance testing), batch is for organized downloading.
@@ -1177,7 +1186,7 @@ def batch(query, output, workers, dry_run, list_only, limit):
         wms batch "GALWEM*" --list
         wms batch hrrr -o ./hrrr_data/
     """
-    resolver, config = get_resolver()
+    resolver, config = get_resolver(ctx)
     query_str = ' '.join(query)
 
     try:
