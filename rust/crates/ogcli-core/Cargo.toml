@@ -17,3 +17,4 @@ chrono = { workspace = true }
 dirs = { workspace = true }
 filetime = { workspace = true }
 indicatif = { workspace = true }
+roxmltree = { workspace = true }

@@ -8,11 +8,11 @@ profiles, and cache files, so both can be used interchangeably.
 
 - `crates/ogcli-core` — library: config/profiles, parsers, fuzzy
   resolver, HTTP clients (shared by binaries and, later, the MCP server)
-- `crates/ogcli` — binaries (`edr`; `wms` comes with the WMS port)
+- `crates/ogcli` — binaries (`edr`, `wms`)
 
 ## Status
 
-Phase 3 (hammer) and everything before it are complete:
+Phases 1-4 (EDR complete + WMS) are complete:
 - config/profiles with legacy migration, per-profile caches
 - /collections parser with the cross-server quirk handling (WKT CRS,
   nested unit symbols, slash-in-ids)
@@ -27,7 +27,13 @@ Phase 3 (hammer) and everything before it are complete:
   --warmup exclusion, --report JSON, latency histogram, indicatif
   progress
 
-Remaining phases: WMS -> MCP -> distribution.
+WMS side: config/profiles, capabilities XML parser (namespace-tolerant,
+local-name matching), smart resolver (natural dimension syntax,
+unit preference, model bonus, dimension defaults/snapping), and the
+map/tile/legend/layers/describe/url/cache commands. WMS hammer and
+batch are not ported yet.
+
+Remaining phases: WMS hammer/batch -> MCP -> distribution.
 
 ## Build
 

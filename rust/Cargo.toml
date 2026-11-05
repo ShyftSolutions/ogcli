@@ -16,6 +16,7 @@ anyhow = "1"
 thiserror = "2"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+roxmltree = "0.20"
 filetime = "0.2"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"

@@ -6,3 +6,4 @@
 pub mod common;
 pub mod edr;
 pub mod fuzz;
+pub mod wms;
