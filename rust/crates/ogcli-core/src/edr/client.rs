@@ -169,6 +169,33 @@ impl EdrClient {
         req.send().expect("request sent")
     }
 
+    /// Execute one request without raising: returns
+    /// (status, body, content_type). Status 0 = transport error
+    /// (body carries the error message).
+    pub fn query_raw(
+        &self,
+        url: &str,
+        params: &[(String, String)],
+    ) -> (u16, Vec<u8>, String) {
+        let mut resp = self.get_soft(url, params);
+        if resp.status().as_u16() == 400 || resp.status().as_u16() == 422 {
+            if let Some(converted) = convert_distances(params) {
+                resp = self.get_soft(url, &converted);
+            }
+        }
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        match resp.bytes() {
+            Ok(b) => (status, b.to_vec(), content_type),
+            Err(e) => (0, e.to_string().into_bytes(), String::new()),
+        }
+    }
+
     /// List model-run instances for a collection.
     pub fn get_instances(&self, collection_id: &str) -> Result<serde_json::Value> {
         let url = self.collections_url(collection_id, Some("instances"), None);

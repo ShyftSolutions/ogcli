@@ -12,7 +12,7 @@ profiles, and cache files, so both can be used interchangeably.
 
 ## Status
 
-Phase 1 (EDR core + discovery commands) is complete:
+Phase 3 (hammer) and everything before it are complete:
 - config/profiles with legacy migration, per-profile caches
 - /collections parser with the cross-server quirk handling (WKT CRS,
   nested unit symbols, slash-in-ids)
@@ -21,9 +21,13 @@ Phase 1 (EDR core + discovery commands) is complete:
   ratio/partial_ratio ported to LCS-based implementations)
 - `edr init/status/profiles/set profile/collections/describe` with
   `-p/--profile` override
-- CoverageJSON/CoverageCollection summarizer
+- all query patterns (position/radius/area/cube/trajectory/corridor,
+  locations, instances, url) with CoverageJSON summaries
+- hammer: full dimension sweep, --rps pacing, --duration cycling,
+  --warmup exclusion, --report JSON, latency histogram, indicatif
+  progress
 
-Remaining phases: EDR queries -> hammer -> WMS -> MCP -> distribution.
+Remaining phases: WMS -> MCP -> distribution.
 
 ## Build
 

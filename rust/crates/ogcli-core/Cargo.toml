@@ -16,3 +16,4 @@ regex = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 filetime = { workspace = true }
+indicatif = { workspace = true }

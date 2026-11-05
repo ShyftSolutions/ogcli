@@ -112,6 +112,52 @@ enum Command {
         #[command(flatten)]
         opts: QueryOptionsArgs,
     },
+    /// Hammer all collections matching query with a full dimension sweep
+    Hammer {
+        query: Vec<String>,
+        /// Number of parallel workers
+        #[arg(short = 'w', long, default_value_t = 20)]
+        workers: usize,
+        /// Query pattern to hammer with
+        #[arg(long = "query-type", default_value = "position")]
+        query_type: String,
+        /// Sample N timesteps per collection (0=all)
+        #[arg(long)]
+        max_timesteps: Option<usize>,
+        /// Sample N parameters per collection (0=all)
+        #[arg(long)]
+        max_params: Option<usize>,
+        /// Sample N vertical levels (0=all)
+        #[arg(long)]
+        max_levels: Option<usize>,
+        /// Random points per collection
+        #[arg(long, default_value_t = 1)]
+        points: usize,
+        /// Cap total requests (0=unlimited)
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+        /// Run for a wall-clock window (e.g. 30s, 5m), cycling requests
+        #[arg(short = 'D', long)]
+        duration: Option<String>,
+        /// Pace to N requests/second (default: as fast as possible)
+        #[arg(long)]
+        rps: Option<f64>,
+        /// Exclude the first N requests from latency stats
+        #[arg(long)]
+        warmup: Option<usize>,
+        /// Write machine-readable results JSON to PATH
+        #[arg(long = "report", value_name = "PATH")]
+        report_path: Option<String>,
+        /// Output directory
+        #[arg(short = 'o', long, default_value = "edr_hammer_output")]
+        output: String,
+        /// Do not save response bodies
+        #[arg(long = "no-save")]
+        no_save: bool,
+        /// Show requests without executing
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
 }
 
 /// Shared arguments for the geometry query commands.
@@ -253,7 +299,38 @@ fn run(cli: Cli) -> Result<()> {
         Command::Url { request_type, query, opts } => {
             cmd_url(request_type, query, opts, config)
         }
+        Command::Hammer {
+            query, workers, query_type, max_timesteps, max_params, max_levels,
+            points, limit, duration, rps, warmup, report_path, output,
+            no_save, dry_run,
+        } => cmd_hammer(
+            HammerOpts {
+                query, workers, query_type, max_timesteps, max_params, max_levels,
+                points, limit, duration, rps, warmup, report_path, output,
+                no_save, dry_run,
+            },
+            config,
+        ),
     }
+}
+
+/// Collected hammer arguments (passed as a struct for readability).
+struct HammerOpts {
+    query: Vec<String>,
+    workers: usize,
+    query_type: String,
+    max_timesteps: Option<usize>,
+    max_params: Option<usize>,
+    max_levels: Option<usize>,
+    points: usize,
+    limit: Option<usize>,
+    duration: Option<String>,
+    rps: Option<f64>,
+    warmup: Option<usize>,
+    report_path: Option<String>,
+    output: String,
+    no_save: bool,
+    dry_run: bool,
 }
 
 fn cmd_init(
@@ -880,4 +957,107 @@ fn cmd_url(
         debug: true,
     };
     cmd_query(&request_type, &args, config)
+}
+
+// ---------------------------------------------------------------------------
+// Hammer
+// ---------------------------------------------------------------------------
+
+fn cmd_hammer(args: HammerOpts, config: EdrConfig) -> Result<()> {
+    use ogcli_core::edr::hammer::EdrHammer;
+    use ogcli_core::edr::resolver::parse_duration;
+
+    if !config.is_initialized() {
+        bail!("EDR not initialized. Run 'edr init <url>' first.");
+    }
+    if args.query.is_empty() {
+        bail!("hammer requires a collection query");
+    }
+    let query_str = args.query.join(" ");
+
+    let duration = match &args.duration {
+        Some(d) => parse_duration(d)
+            .and_then(|d| d.to_std().ok())
+            .ok_or_else(|| anyhow::anyhow!("invalid duration '{d}' (use e.g. 30s, 5m, 2h)"))?,
+        None => std::time::Duration::ZERO,
+    };
+
+    let resolver = resolver_for(&config)?;
+    let matching: Vec<usize> = resolver
+        .list_collections(Some(&query_str), 200)
+        .into_iter()
+        .filter(|(_, score)| *score > 50.0)
+        .map(|(i, _)| i)
+        .collect();
+    if matching.is_empty() {
+        bail!("no confident matches for '{query_str}'");
+    }
+
+    println!("-> Found {} collections matching '{query_str}':", matching.len());
+    for &i in matching.iter().take(10) {
+        println!("  - {}", resolver.collection(i).summary_line());
+    }
+    if matching.len() > 10 {
+        println!("  ... and {} more", matching.len() - 10);
+    }
+
+    // The hammer borrows the collection slice
+    let mut collections = resolver.capabilities.collections.clone();
+    let matching_ids: Vec<String> = matching
+        .iter()
+        .map(|&i| collections[i].id.clone())
+        .collect();
+    collections.retain(|c| matching_ids.contains(&c.id));
+
+    let mut hammer = EdrHammer::new(config.server_url(), config.api_key(), &collections);
+    hammer.workers = args.workers;
+    hammer.query_type = args.query_type.clone();
+    hammer.output_dir = std::path::PathBuf::from(&args.output);
+    hammer.save = !args.no_save;
+    hammer.dry_run = args.dry_run;
+    hammer.max_timesteps = args.max_timesteps.unwrap_or(0);
+    hammer.max_params = args.max_params.unwrap_or(0);
+    hammer.max_levels = args.max_levels.unwrap_or(0);
+    hammer.points = args.points;
+    hammer.limit = args.limit.unwrap_or(0);
+    hammer.duration = duration;
+    hammer.rps = args.rps.unwrap_or(0.0);
+    hammer.warmup = args.warmup.unwrap_or(0);
+
+    hammer.generate();
+    if args.dry_run || duration.is_zero() {
+        println!();
+        println!(
+            "Generated {} requests (query: {}, workers: {})",
+            hammer.requests.len(),
+            args.query_type,
+            args.workers
+        );
+    } else {
+        println!();
+        println!(
+            "Running for {:.0}s over {} generated requests (cycling, query: {})",
+            duration.as_secs_f64(),
+            hammer.requests.len(),
+            args.query_type
+        );
+    }
+    if let Some(rps) = args.rps {
+        println!("Paced at {rps} req/s");
+    }
+    if args.dry_run {
+        println!("(dry run - no requests will be made)");
+    }
+
+    let stats = hammer.run()?;
+    if !args.dry_run {
+        println!("{}", "=".repeat(50));
+        println!("{}", stats.report());
+        if let Some(path) = &args.report_path {
+            hammer.write_report(&stats, std::path::Path::new(path))?;
+            println!();
+            println!("✓ Report saved: {path}");
+        }
+    }
+    Ok(())
 }

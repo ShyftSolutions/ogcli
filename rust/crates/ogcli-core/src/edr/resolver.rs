@@ -496,7 +496,7 @@ pub fn parse_duration(expr: &str) -> Option<chrono::Duration> {
         }
         return None;
     }
-    // 6h / 2d
+    // 6h / 2d / 30s / 45m
     if let Some(hours) = expr.strip_suffix('h').and_then(|n| n.parse::<f64>().ok()) {
         return Some(secs(hours * 3600.0));
     }
@@ -505,6 +505,9 @@ pub fn parse_duration(expr: &str) -> Option<chrono::Duration> {
     }
     if let Some(minutes) = expr.strip_suffix('m').and_then(|n| n.parse::<f64>().ok()) {
         return Some(secs(minutes * 60.0));
+    }
+    if let Some(seconds) = expr.strip_suffix('s').and_then(|n| n.parse::<f64>().ok()) {
+        return Some(secs(seconds));
     }
     None
 }
