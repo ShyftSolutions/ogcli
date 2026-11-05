@@ -1,0 +1,16 @@
+[package]
+name = "ogcli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ogcli command-line tools (edr, wms)"
+
+[[bin]]
+name = "edr"
+path = "src/bin/edr.rs"
+
+[dependencies]
+ogcli-core = { path = "../ogcli-core" }
+clap = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
