@@ -363,6 +363,21 @@ impl<'a> EdrHammer<'a> {
         &self.requests
     }
 
+    /// Total request count that bounds the run, if any.
+    /// - Duration mode: None (cycle until deadline) unless a limit caps it
+    /// - Single-pass mode (default): the generated request count
+    fn effective_total(&self) -> Option<usize> {
+        if !self.duration.is_zero() {
+            if self.limit > 0 {
+                Some(self.limit)
+            } else {
+                None
+            }
+        } else {
+            Some(self.requests.len())
+        }
+    }
+
     /// Execute the sweep with a progress bar. Returns stats.
     pub fn run(&mut self) -> Result<HammerStats> {
         if self.requests.is_empty() {
@@ -427,15 +442,21 @@ impl<'a> EdrHammer<'a> {
         } else {
             Some(start + self.duration)
         };
+        // Single-pass mode (no duration): run the generated requests
+        // exactly once. Duration mode: cycle until the deadline, with
+        // limit capping if set. A bare run with neither limit nor
+        // duration must NOT cycle forever.
+        let effective_total = self.effective_total();
 
         std::thread::scope(|scope| {
             for _ in 0..self.workers.max(1) {
                 scope.spawn(|| loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    if self.limit > 0 && i >= self.limit {
-                        break;
-                    }
-                    if deadline.is_some_and(|dl| Instant::now() >= dl) {
+                    if let Some(total) = effective_total {
+                        if i >= total {
+                            break;
+                        }
+                    } else if deadline.is_some_and(|dl| Instant::now() >= dl) {
                         break;
                     }
                     let req = &self.requests[i % self.requests.len()];
@@ -654,6 +675,29 @@ mod tests {
         let mut h = hammer(&cols);
         h.query_type = "radius".into();
         assert!(h.generate().is_empty());
+    }
+
+    #[test]
+    fn effective_total_bounds_the_run() {
+        let cols = collections();
+        let mut h = hammer(&cols);
+        h.generate();
+        // Default single pass: exactly the generated requests, never more
+        assert_eq!(h.effective_total(), Some(h.requests.len()));
+
+        // Explicit limit truncates in single-pass too (generate applies it)
+        h.limit = 3;
+        h.generate();
+        assert_eq!(h.effective_total(), Some(3));
+
+        // Duration mode without limit: open-ended (bounded by deadline)
+        h.limit = 0;
+        h.duration = std::time::Duration::from_secs(5);
+        assert_eq!(h.effective_total(), None);
+
+        // Duration mode with a cap
+        h.limit = 7;
+        assert_eq!(h.effective_total(), Some(7));
     }
 
     #[test]
