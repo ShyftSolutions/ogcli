@@ -11,8 +11,8 @@ use ogcli_core::wms::resolver::SmartQueryResolver;
 #[derive(Parser)]
 #[command(
     name = "wms",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (rust)"),
     about = "WMS query tool with fuzzy search.",
-    version
 )]
 struct Cli {
     /// Use a saved server profile for this invocation

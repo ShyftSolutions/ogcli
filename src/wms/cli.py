@@ -66,6 +66,7 @@ def sanitize_filename(name: str) -> str:
 
 
 @click.group(invoke_without_command=True)
+@click.version_option(package_name='wms-cli', version='0.1.0 (python)')
 @click.option('--profile', '-p', default=None, metavar='NAME',
               help='Use a saved server profile for this invocation',
               shell_complete=complete_profile_names)

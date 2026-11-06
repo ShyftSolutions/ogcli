@@ -15,8 +15,8 @@ use ogcli_core::edr::resolver::EdrResolver;
 #[derive(Parser)]
 #[command(
     name = "edr",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (rust)"),
     about = "EDR query tool with fuzzy search (OGC API - Environmental Data Retrieval).",
-    version
 )]
 struct Cli {
     /// Use a saved server profile for this invocation

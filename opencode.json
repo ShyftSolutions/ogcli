@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "servers": {
+      "ogcli": {
+        "type": "local",
+        "command": [
+          "/Users/luke/workspace/work/ogcli/venv/bin/ogcli-mcp"
+        ]
+      }
+    }
+  }
+}
