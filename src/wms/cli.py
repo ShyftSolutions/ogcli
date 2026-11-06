@@ -67,8 +67,10 @@ def sanitize_filename(name: str) -> str:
 
 @click.group(invoke_without_command=True)
 @click.version_option(package_name='wms-cli', version='0.1.0 (python)')
-@click.option('--profile', '-p', default=None, metavar='NAME',
-              help='Use a saved server profile for this invocation',
+@click.option('--profile', '-p', 'profile', is_flag=False, flag_value='', default=None,
+              metavar='[NAME]',
+              help='Use a saved server profile for this invocation. With no value, '
+                   'interactively pick a profile and make it active.',
               shell_complete=complete_profile_names)
 @click.pass_context
 def cli(ctx, profile):
@@ -76,7 +78,27 @@ def cli(ctx, profile):
 
     Run without arguments to open interactive TUI.
     """
-    if profile:
+    if profile == '':
+        # Bare --profile: interactive picker, sets the active profile
+        config = load_config()
+        names = sorted(config.profile_names())
+        profiles = [(n, config.profiles[n].source_path) for n in names]
+        if not profiles:
+            click.echo("No saved profiles. Save one with: wms init <source> --save NAME")
+            sys.exit(1)
+        try:
+            from ..common.profiles import pick_profile_interactive
+            picked = pick_profile_interactive(profiles, config.active, 'wms')
+        except (RuntimeError, EOFError) as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        config.set_active(picked)
+        save_config(config)
+        click.echo(f"\u2713 Active profile: {picked}")
+        ctx.obj = config
+        if ctx.invoked_subcommand is None:
+            return
+    elif profile:
         config = load_config()
         if not config.has_profile(profile):
             click.echo(f"Error: no profile named '{profile}'.", err=True)

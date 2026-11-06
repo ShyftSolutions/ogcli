@@ -175,6 +175,10 @@ wms profiles
 edr set profile local
 wms set profile prod
 
+# Interactive picker: lists profiles, pick by number or name
+edr --profile
+wms --profile
+
 # One-off against another profile without switching
 edr --profile folkweather collections hrrr
 wms -p prod map gfs temp

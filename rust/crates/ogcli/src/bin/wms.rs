@@ -15,9 +15,10 @@ use ogcli_core::wms::resolver::SmartQueryResolver;
     about = "WMS query tool with fuzzy search.",
 )]
 struct Cli {
-    /// Use a saved server profile for this invocation
-    #[arg(short, long, global = true, value_name = "NAME")]
-    profile: Option<String>,
+    /// Use a saved server profile for this invocation. With no value,
+    /// interactively pick a profile and make it the active one.
+    #[arg(short, long, global = true, value_name = "NAME", num_args = 0..=1)]
+    profile: Option<Option<String>>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -169,15 +170,43 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     let mut config = WmsConfig::new();
-    if cli.command.is_some() {
+    {
         config = wms_config::load_config();
-        if let Some(name) = &cli.profile {
-            if !config.has_profile(name) {
-                let names = config.profile_names().join(", ");
-                bail!("no profile named '{name}'. Saved profiles: {names}");
+        match cli.profile {
+            // Bare --profile: interactive picker, sets the active profile
+            Some(None) => {
+                let mut names = config.profile_names();
+                names.sort();
+                let profiles: Vec<(String, String)> = names
+                    .iter()
+                    .map(|n| {
+                        let p = &config.profiles[n];
+                        (n.clone(), p.source_path.clone())
+                    })
+                    .collect();
+                let picked = ogcli_core::common::pick_profile_interactive(
+                    &profiles, &config.active, "wms",
+                )?;
+                config.set_active(&picked)?;
+                wms_config::save_config(&config)?;
+                println!("✓ Active profile: {picked}");
             }
-            config.active = name.clone();
+            // --profile NAME: one-off override
+            Some(Some(ref name)) => {
+                if !config.has_profile(name) {
+                    let names = config.profile_names().join(", ");
+                    bail!("no profile named '{name}'. Saved profiles: {names}");
+                }
+                config.active = name.clone();
+            }
+            None => {}
         }
+    }
+
+    // Bare --profile with no subcommand: the picker already set the
+    // active profile; nothing else to do.
+    if cli.profile == Some(None) && cli.command.is_none() {
+        return Ok(());
     }
 
     match cli.command.unwrap_or(Command::Status) {
