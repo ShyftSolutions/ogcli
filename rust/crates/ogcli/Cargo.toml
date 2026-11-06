@@ -19,3 +19,4 @@ clap = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
+libc = "0.2"

@@ -14,7 +14,7 @@ use rmcp::model::{
     CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities,
     ServerInfo,
 };
-use rmcp::service::{serve_server, ServiceExt};
+use rmcp::service::serve_server;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use schemars::JsonSchema;
@@ -27,7 +27,7 @@ use rmcp::transport::io::stdio;
 
 use ogcli_core::edr::config as ec;
 use ogcli_core::edr::parser::summarize_coverage;
-use ogcli_core::edr::query::{build_query, build_url, QueryOptions};
+use ogcli_core::edr::query::{build_query, QueryOptions};
 use ogcli_core::edr::resolver::EdrResolver;
 use ogcli_core::wms::config as wc;
 use ogcli_core::wms::resolver::{ResolvedQuery, SmartQueryResolver};
@@ -817,7 +817,7 @@ impl OgcliServer {
                 "status_breakdown": stats.status_counts,
                 "duration_s": (stats.duration_s() * 100.0).round() / 100.0,
                 "req_per_s": (stats.total as f64 / stats.duration_s() * 10.0).round() / 10.0,
-                "data_kb": (stats.bytes as f64 / 1024.0 * 10.0).round() / 10.0,
+                
                 "notes": notes,
             })))
         }).await
@@ -1255,6 +1255,7 @@ impl OgcliServer {
                 "failed": failed,
                 "duration_s": (duration * 100.0).round() / 100.0,
                 "req_per_s": (requests.len() as f64 / duration * 10.0).round() / 10.0,
+                "data_kb": (bytes as f64 / 1024.0 * 10.0).round() / 10.0,
                 "truncated_to_limit": truncated,
                 "notes": notes,
             })))

@@ -231,6 +231,11 @@ enum SetWhat {
 }
 
 fn main() -> ExitCode {
+    // Die quietly on SIGPIPE instead of panicking when output is piped
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
