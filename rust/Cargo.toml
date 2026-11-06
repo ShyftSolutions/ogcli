@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ogcli-core", "crates/ogcli"]
+members = ["crates/ogcli-core", "crates/ogcli", "crates/ogcli-mcp"]
 
 [workspace.package]
 version = "0.1.0"

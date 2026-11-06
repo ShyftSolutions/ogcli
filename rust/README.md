@@ -9,6 +9,7 @@ profiles, and cache files, so both can be used interchangeably.
 - `crates/ogcli-core` — library: config/profiles, parsers, fuzzy
   resolver, HTTP clients (shared by binaries and, later, the MCP server)
 - `crates/ogcli` — binaries (`edr`, `wms`)
+- `crates/ogcli-mcp` — MCP server (`ogcli-mcp`, 15 tools, stdio)
 
 ## Status
 
@@ -33,7 +34,15 @@ unit preference, model bonus, dimension defaults/snapping), and the
 map/tile/legend/layers/describe/url/cache commands. WMS hammer and
 batch are not ported yet.
 
-Remaining phases: WMS hammer/batch -> MCP -> distribution.
+The MCP server (crates/ogcli-mcp) ports all 15 Python tools via rmcp:
+same ~/.wms config/profiles, same response shapes (JSON summaries,
+capped at ~50k chars, payloads saved to ~/.wms/mcp_output), hammer
+safety caps (dry_run default, 500 req / 64 workers), and model-visible
+isError results with clean messages. wms_map returns an inline PNG.
+
+Register (Rust): claude mcp add ogcli -- rust/target/release/ogcli-mcp
+
+Remaining phases: distribution (+ WMS hammer/batch CLI commands).
 
 ## Build
 
