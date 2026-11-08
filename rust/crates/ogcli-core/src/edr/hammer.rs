@@ -615,7 +615,7 @@ mod tests {
         parse_collections(FIXTURE, "").unwrap().collections
     }
 
-    fn hammer(collections: &[EdrCollection]) -> EdrHammer {
+    fn hammer(collections: &[EdrCollection]) -> EdrHammer<'_> {
         let mut h = EdrHammer::new("https://example.com/edr", "", collections);
         h.save = false;
         h

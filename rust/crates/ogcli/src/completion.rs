@@ -129,7 +129,8 @@ impl Tool {
             ],
             Tool::Wms => &[
                 "init", "status", "profiles", "layers", "describe",
-                "map", "tile", "legend", "url", "cache", "set",
+                "map", "tile", "legend", "url", "hammer", "groups", "batch",
+                "cache", "set",
             ],
         }
     }
@@ -141,7 +142,7 @@ impl Tool {
                 "collections", "describe", "position", "radius", "area", "cube",
                 "trajectory", "corridor", "locations", "instances", "url", "hammer",
             ],
-            Tool::Wms => &["layers", "describe", "map", "tile", "legend", "url"],
+            Tool::Wms => &["layers", "describe", "map", "tile", "legend", "url", "hammer", "batch"],
         }
     }
 }

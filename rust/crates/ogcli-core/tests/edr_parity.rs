@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde_json::json;
 
 use ogcli_core::edr::parser::{
-    parse_collections, pretty_crs, summarize_coverage, Parameter,
+    parse_collections, pretty_crs, summarize_coverage,
 };
 use ogcli_core::edr::resolver::{
     bbox_to_wkt, parse_coords, tokenize, EdrResolver,

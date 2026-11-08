@@ -31,8 +31,12 @@ Phases 1-4 (EDR complete + WMS) are complete:
 WMS side: config/profiles, capabilities XML parser (namespace-tolerant,
 local-name matching), smart resolver (natural dimension syntax,
 unit preference, model bonus, dimension defaults/snapping), and the
-map/tile/legend/layers/describe/url/cache commands. WMS hammer and
-batch are not ported yet.
+map/tile/legend/layers/describe/url/cache/hammer/groups/batch
+commands. `wms hammer` sweeps the dimension space (RUN x FORECAST x
+ELEVATION, styles) like the Python hammer, with `-n/--limit` as a
+safety cap Python lacks; `wms batch` downloads one GetMap per matched
+layer using the smart resolver's defaults; `wms groups` lists model
+groups from layer-name prefixes.
 
 The MCP server (crates/ogcli-mcp) ports all 15 Python tools via rmcp:
 same ~/.wms config/profiles, same response shapes (JSON summaries,
@@ -42,7 +46,8 @@ isError results with clean messages. wms_map returns an inline PNG.
 
 Register (Rust): claude mcp add ogcli -- rust/target/release/ogcli-mcp
 
-Remaining phases: distribution (+ WMS hammer/batch CLI commands).
+Remaining phases: distribution (install scripts still install the
+Python package; nothing installs the Rust binaries yet).
 
 ## Build
 

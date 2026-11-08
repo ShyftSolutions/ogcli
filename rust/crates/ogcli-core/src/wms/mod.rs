@@ -3,5 +3,6 @@
 //! and hammer.
 
 pub mod config;
+pub mod hammer;
 pub mod parser;
 pub mod resolver;

@@ -70,6 +70,38 @@ pub struct WmsCapabilities {
     pub root_layer: Option<Layer>,
 }
 
+/// Group queryable layers by name prefix (`MODEL_Param` -> `MODEL`);
+/// names without `_` land in "Other". Optionally case-insensitive
+/// substring filter on the group name. Sorted by group (Python
+/// `wms groups` parity).
+pub fn layer_groups(
+    layers: &[&Layer],
+    pattern: Option<&str>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for layer in layers {
+        let Some(name) = layer.name.as_deref().filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        let group = if name.contains('_') {
+            name.split('_').next().unwrap_or("Other")
+        } else {
+            "Other"
+        };
+        if let Some(p) = pattern {
+            if !group.to_lowercase().contains(&p.to_lowercase()) {
+                continue;
+            }
+        }
+        groups
+            .entry(group.to_string())
+            .or_default()
+            .push(name.to_string());
+    }
+    groups
+}
+
 impl WmsCapabilities {
     /// All queryable layers as a flat list.
     pub fn queryable_layers(&self) -> Vec<&Layer> {
