@@ -237,6 +237,13 @@ fn main() -> ExitCode {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
+    // Click-compatible shell completion (same protocol as the Python CLIs)
+    if let Some(code) = ogcli::completion::handle(
+        ogcli::completion::Tool::Edr,
+        "edr",
+    ) {
+        return ExitCode::from(code as u8);
+    }
     let cli = Cli::parse();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -249,7 +256,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     // Load config up-front, applying any --profile override
-    let mut config = EdrConfig::new();
+    let mut config;
     {
         config = edr_config::load_config();
         match cli.profile {

@@ -158,6 +158,13 @@ fn main() -> ExitCode {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
+    // Click-compatible shell completion (same protocol as the Python CLIs)
+    if let Some(code) = ogcli::completion::handle(
+        ogcli::completion::Tool::Wms,
+        "wms",
+    ) {
+        return ExitCode::from(code as u8);
+    }
     let cli = Cli::parse();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -169,7 +176,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let mut config = WmsConfig::new();
+    let mut config;
     {
         config = wms_config::load_config();
         match cli.profile {

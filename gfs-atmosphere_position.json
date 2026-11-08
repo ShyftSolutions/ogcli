@@ -1,0 +1,53 @@
+{
+  "type": "Coverage",
+  "domain": {
+    "type": "Domain",
+    "domainType": "Point",
+    "axes": {
+      "x": {
+        "values": [
+          180.0
+        ]
+      },
+      "y": {
+        "values": [
+          0.0
+        ]
+      }
+    },
+    "referencing": [
+      {
+        "coordinates": [
+          "x",
+          "y"
+        ],
+        "system": {
+          "type": "GeographicCRS",
+          "id": "http://www.opengis.net/def/crs/EPSG/0/4326"
+        }
+      }
+    ]
+  },
+  "parameters": {
+    "PWAT": {
+      "type": "Parameter",
+      "observedProperty": {
+        "label": {
+          "en": "PWAT"
+        }
+      },
+      "unit": {
+        "symbol": "kg/m^2"
+      }
+    }
+  },
+  "ranges": {
+    "PWAT": {
+      "type": "NdArray",
+      "dataType": "float",
+      "values": [
+        50.781345
+      ]
+    }
+  }
+}
