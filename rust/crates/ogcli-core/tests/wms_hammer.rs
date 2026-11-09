@@ -7,7 +7,7 @@ use ogcli_core::wms::parser::{layer_groups, parse_capabilities, WmsCapabilities}
 
 fn caps() -> WmsCapabilities {
     let xml = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/capabilities.xml"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capabilities.xml"),
     )
     .expect("fixture capabilities.xml");
     parse_capabilities(&xml).unwrap()

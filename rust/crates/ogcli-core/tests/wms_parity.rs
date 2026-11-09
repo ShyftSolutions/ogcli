@@ -8,7 +8,7 @@ use ogcli_core::wms::resolver::SmartQueryResolver;
 
 fn resolver() -> SmartQueryResolver {
     let xml = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/capabilities.xml"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capabilities.xml"),
     )
     .expect("fixture capabilities.xml");
     SmartQueryResolver::new(parse_capabilities(&xml).unwrap())

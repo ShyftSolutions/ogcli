@@ -44,10 +44,12 @@ capped at ~50k chars, payloads saved to ~/.wms/mcp_output), hammer
 safety caps (dry_run default, 500 req / 64 workers), and model-visible
 isError results with clean messages. wms_map returns an inline PNG.
 
-Register (Rust): claude mcp add ogcli -- rust/target/release/ogcli-mcp
+Register (Rust): claude mcp add ogcli -- ~/.local/bin/ogcli-mcp
 
-Remaining phases: distribution (install scripts still install the
-Python package; nothing installs the Rust binaries yet).
+The Rust implementation is the only implementation (the Python code
+was removed after this rewrite reached parity). Distribution:
+`../install.sh` builds from source and installs wms, edr and
+ogcli-mcp to ~/.local/bin.
 
 ## Build
 
@@ -55,6 +57,3 @@ Python package; nothing installs the Rust binaries yet).
 cargo build --release
 target/release/edr --help
 ```
-
-The Python implementation in `../src` remains the reference until the
-port reaches feature parity.

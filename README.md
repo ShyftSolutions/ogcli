@@ -11,22 +11,23 @@ Command-line tools for OGC web services with fuzzy search and natural dimension 
 - **Natural dimensions** - Use `6h`, `12z`, `850mb` instead of ISO8601
 - **Smart defaults** - Automatically uses latest RUN, default FORECAST
 - **Shell completion** - Tab completion for commands, options, and layer/collection names
-- **Terminal image display** - View images directly in terminal with `--display` flag
 - **Cache management** - 10-minute sliding TTL cache for capabilities/collections
 - **Batch downloads** - Download multiple layers matching a pattern
 - **Performance testing** - Hammer WMS/EDR servers with concurrent requests
-- **Interactive TUI** - Terminal UI with autocomplete (WMS)
 
 ## Installation
 
-```bash
-# Quick setup (installs CLI + shell completion)
-./init.sh
+Requires the [Rust toolchain](https://rustup.rs).
 
-# Or manual setup
-python3 -m venv venv
-source venv/bin/activate
-pip install -e .
+```bash
+# Quick setup (builds from source, installs to ~/.local/bin,
+# sets up PATH + shell completion)
+./install.sh
+
+# Or build manually
+cd rust
+cargo build --release
+# Binaries: rust/target/release/{wms,edr,ogcli-mcp}
 ```
 
 ## Shell Completion
@@ -75,8 +76,8 @@ wms map gfs temp f 6h
 # Get layer details
 wms describe gfs surface temp
 
-# Launch interactive TUI
-wms
+# Show current configuration
+wms status
 ```
 
 ## Commands
@@ -97,7 +98,6 @@ wms
 | `wms cache clear` | Clear capabilities cache |
 | `wms cache refresh` | Force refresh from server |
 | `wms status` | Show configuration |
-| `wms` | Launch interactive TUI |
 
 ## Natural Dimension Syntax
 
@@ -109,18 +109,6 @@ Instead of ISO8601 strings, use shortcuts:
 | `00z`, `12z`, `latest` | RUN | Model run time |
 | `850`, `500mb` | ELEVATION | Pressure level |
 | `f`, `c`, `k` | Unit | Temperature unit preference |
-
-## Display Images in Terminal
-
-Use the `--display` or `-D` flag to render images directly in your terminal:
-
-```bash
-wms map gfs temp -D                   # Display only (no file saved)
-wms map gfs temp -D -o output.png     # Display AND save
-wms map gfs temp                      # Save only (default behavior)
-```
-
-Images are rendered using Unicode half-block characters (`▀`) with 24-bit color.
 
 ## Configuration
 
@@ -134,8 +122,7 @@ WMS and EDR state are independent: `edr init` does not affect `wms init`.
 
 ## Dependencies
 
-- Python 3.10+
-- click, rapidfuzz, requests, lxml, textual, Pillow
+- [Rust toolchain](https://rustup.rs) (to build from source)
 
 ---
 
@@ -283,17 +270,13 @@ An MCP (Model Context Protocol) server exposes the same WMS + EDR tooling to LLM
 
 ## Setup
 
-```bash
-# Install with the mcp extra (adds the official mcp package)
-pip install -e ".[mcp]"
-```
-
-This installs the `ogcli-mcp` command (stdio transport).
+`ogcli-mcp` is built alongside the CLIs (`cargo build --release` or
+`./install.sh`) and speaks stdio.
 
 ### Claude Code
 
 ```bash
-claude mcp add ogcli -- /path/to/ogcli/venv/bin/ogcli-mcp
+claude mcp add ogcli -- ~/.local/bin/ogcli-mcp
 ```
 
 ### Claude Desktop
@@ -304,7 +287,7 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "ogcli": {
-      "command": "/path/to/ogcli/venv/bin/ogcli-mcp"
+      "command": "/Users/you/.local/bin/ogcli-mcp"
     }
   }
 }

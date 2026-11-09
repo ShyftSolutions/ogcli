@@ -4,7 +4,7 @@
       "ogcli": {
         "type": "local",
         "command": [
-          "/Users/luke/workspace/work/ogcli/venv/bin/ogcli-mcp"
+          "/Users/luke/workspace/work/ogcli/rust/target/release/ogcli-mcp"
         ]
       }
     }
