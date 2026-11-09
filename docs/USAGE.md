@@ -22,18 +22,20 @@ A comprehensive guide to using the WMS CLI tool for fetching weather map data.
 
 ### Installation
 
+Requires the [Rust toolchain](https://rustup.rs).
+
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd wms-cli
+cd ogcli
 
-# Quick setup (creates venv, installs CLI, enables shell completion)
-./init.sh
+# Quick setup (builds from source, installs to ~/.local/bin,
+# enables shell completion)
+./install.sh
 
-# Or manual setup
-python3 -m venv venv
-source venv/bin/activate
-pip install -e .
+# Or build manually
+cd rust
+cargo build --release
 ```
 
 ### Initialize the CLI

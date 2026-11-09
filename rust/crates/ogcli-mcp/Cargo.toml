@@ -1,0 +1,17 @@
+[package]
+name = "ogcli-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ogcli MCP server (wms + edr tools for LLM agents)"
+
+[dependencies]
+ogcli-core = { path = "../ogcli-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+rmcp = { version = "0.14", features = ["server", "transport-io", "macros", "schemars"] }
+base64 = "0.22"
+schemars = "1"
+reqwest = { workspace = true }

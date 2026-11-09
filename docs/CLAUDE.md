@@ -4,54 +4,54 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-**WMS CLI** is a command-line tool for interacting with OGC Web Map Service (WMS) endpoints. It features fuzzy search for layer names and natural language dimension syntax.
+**ogcli** is a Rust command-line toolset for interacting with OGC web services: **wms** (Web Map Service) and **edr** (Environmental Data Retrieval). It features fuzzy search for layer/collection names and natural language dimension syntax, plus an MCP server (`ogcli-mcp`) exposing the same tooling to LLM agents.
 
 ### Key Features
-- Fuzzy search to find layers by name/description
+- Fuzzy search to find layers/collections by name/description
 - Natural dimension syntax: `6h`, `12z`, `850mb` instead of ISO8601
 - Batch operations for downloading multiple layers
-- Performance testing (hammer) for stress testing WMS servers
-- Interactive TUI mode
+- Performance testing (hammer) for stress testing WMS/EDR servers
+- MCP server with 15 tools (stdio, for Claude Code/Desktop etc.)
 
 ## Project Structure
 
 ```
-wms-cli/
-├── src/                    # Core modules
-│   ├── cli.py              # Click-based CLI commands
-│   ├── completions.py      # Shell tab completion
-│   ├── config.py           # Configuration and cache management
-│   ├── dimension_parser.py # Parse natural time expressions
-│   ├── fuzzy.py            # Fuzzy search engine (rapidfuzz)
-│   ├── hammer.py           # Batch automation tool
-│   ├── smart_resolver.py   # Query resolution with dimensions
-│   ├── tui.py              # Interactive TUI (Textual)
-│   ├── wms_client.py       # HTTP client for WMS operations
-│   └── wms_parser.py       # XML parser for GetCapabilities
-├── tests/                  # Test files
-├── docs/                   # Documentation
-│   ├── USAGE.md            # Comprehensive usage guide
-│   ├── COMMAND_SYNTAX.md   # CLI command reference
-│   └── CLAUDE.md           # This file - development guide
-├── init.sh                 # Setup script (installs CLI + shell completion)
-├── pyproject.toml          # Package configuration
-├── requirements.txt        # Dependencies
-└── wms                     # CLI entry point (dev use)
+ogcli/
+├── rust/                        # Rust workspace (the implementation)
+│   ├── crates/
+│   │   ├── ogcli-core/          # Library: shared by CLIs + MCP
+│   │   │   ├── src/common/      # Config dir, profile picker
+│   │   │   ├── src/edr/         # EDR client, config, parser, resolver,
+│   │   │   │                    #   query builder, hammer
+│   │   │   ├── src/wms/         # WMS config, XML parser, resolver, hammer
+│   │   │   ├── src/fuzz.rs      # Fuzzy scoring (rapidfuzz-compatible)
+│   │   │   └── tests/           # Fixture-locked parity tests
+│   │   ├── ogcli/               # The `edr` and `wms` binaries
+│   │   │   └── src/completion.rs  # Click-compatible shell completion
+│   │   └── ogcli-mcp/           # MCP server binary (rmcp, stdio)
+│   └── README.md                # Rust-specific notes
+├── docs/                        # Documentation
+│   ├── USAGE.md                 # Comprehensive usage guide
+│   ├── COMMAND_SYNTAX.md        # CLI command reference
+│   └── CLAUDE.md                # This file - development guide
+└── install.sh                   # Global install (builds + installs binaries)
 ```
 
 ## Development Setup
 
 ```bash
-# Quick setup (recommended)
-./init.sh
-
-# Or manual setup
-python3 -m venv venv
-source venv/bin/activate
-pip install -e .
+# Build (requires https://rustup.rs)
+cd rust
+cargo build --release
 
 # Run CLI
-wms --help
+./target/release/wms --help
+
+# Run tests
+cargo test
+
+# Global install (~/.local/bin + shell completion)
+../install.sh
 ```
 
 ## Key Commands
@@ -83,9 +83,6 @@ wms cache refresh            # Force refresh
 
 # URL building
 wms url map gfs temp 6h      # Build GetMap URL
-
-# Interactive TUI
-wms
 ```
 
 See `docs/USAGE.md` for comprehensive usage guide and `docs/COMMAND_SYNTAX.md` for full command reference.
@@ -97,41 +94,43 @@ See `docs/USAGE.md` for comprehensive usage guide and `docs/COMMAND_SYNTAX.md` f
 ```
 User Query: "gfs temp f 12z 6h"
      ↓
-SmartQueryResolver
+SmartQueryResolver (ogcli-core/src/wms/resolver.rs)
      ↓
 1. Extract dimensions: {RUN: '12z', FORECAST: '6h'}
 2. Extract unit preference: 'f' (Fahrenheit)
 3. Clean query: "gfs temp"
      ↓
-FuzzySearchEngine
+Fuzzy scoring (ogcli-core/src/fuzz.rs)
      ↓
 4. Fuzzy match layer name
 5. Apply unit filter
 6. Return: GFS_Temperature_F
      ↓
-DimensionParser
+Dimension parsing (same resolver module)
      ↓
 7. Validate '12z' → find closest 12Z run
 8. Validate '6h' → PT6H
      ↓
-Result: Resolved layer with valid dimensions
+Result: ResolvedQuery with valid dimensions
 ```
 
-### Key Classes
+### Key Modules
 
-| Class | File | Purpose |
-|-------|------|---------|
-| `SmartQueryResolver` | `smart_resolver.py` | Main query resolution orchestrator |
-| `FuzzySearchEngine` | `fuzzy.py` | Layer name matching with rapidfuzz |
-| `DimensionParser` | `dimension_parser.py` | Parse and validate dimension values |
-| `WMSClient` | `wms_client.py` | HTTP client for all WMS requests |
-| `WMSCapabilities` | `wms_parser.py` | Parsed GetCapabilities data |
+| Module | File | Purpose |
+|--------|------|---------|
+| `SmartQueryResolver` | `ogcli-core/src/wms/resolver.rs` | Query resolution, dimension parsing |
+| `fuzz` | `ogcli-core/src/fuzz.rs` | rapidfuzz-compatible scoring |
+| `WmsCapabilities` | `ogcli-core/src/wms/parser.rs` | GetCapabilities XML parsing (roxmltree) |
+| `EdrResolver` / parser | `ogcli-core/src/edr/` | Collections JSON, CoverageJSON summaries |
+| `hammer` | `ogcli-core/src/{wms,edr}/hammer.rs` | Dimension-sweep load generators |
+| `completion` | `ogcli/src/completion.rs` | Click-compatible completion protocol |
 
 ### Configuration
 
-Config stored in `~/.wms/`:
-- `config.json` - Source URL, output directory, settings
-- `capabilities_cache.xml` - Cached GetCapabilities (10-min sliding TTL)
+Config stored in `~/.wms/` (shared by both CLIs and the MCP server):
+- `config.json` - WMS profiles, source URL, settings
+- `edr_config.json` - EDR profiles, server URL, settings
+- `capabilities_cache.xml` / `edr_cache/` - Cached capabilities (10-min sliding TTL, per profile)
 
 ## WMS Concepts
 
@@ -159,37 +158,34 @@ The CLI accepts shortcuts:
 ## Testing
 
 ```bash
-# Run smart resolver tests
-python tests/test_smart_resolver.py
-
-# Verify syntax
-python -m py_compile src/*.py
+cd rust
+cargo test            # 45 tests: resolver parity (fixture-locked),
+                      # parser, config, hammer generation
 ```
 
 ## Common Tasks
 
 ### Adding a New CLI Command
 
-1. Add command function in `src/cli.py`
-2. Use `@cli.command()` decorator
-3. Use `get_resolver()` to get SmartQueryResolver
-4. Handle `AmbiguousQueryError` for low-confidence matches
+1. Add a variant to the `Command` enum in `rust/crates/ogcli/src/bin/wms.rs` (or `edr.rs`)
+2. Implement `cmd_<name>` and wire it into the `match` dispatch
+3. If it takes a fuzzy layer query, add it to `query_commands()` in `completion.rs`
+4. Add the subcommand name to `subcommands()` in `completion.rs`
 
 ### Modifying Dimension Parsing
 
-1. Edit `src/dimension_parser.py`
-2. Add patterns to `FORECAST_SHORTCUTS` or `RUN_PATTERNS`
-3. Update `_extract_tokens()` in `smart_resolver.py` if needed
+1. Token extraction and dimension parsing live in `SmartQueryResolver` (`ogcli-core/src/wms/resolver.rs`)
+2. Resolver behavior is locked by the fixture tests in `ogcli-core/tests/wms_parity.rs` - run `cargo test` after changes
 
 ### Updating Cache Behavior
 
-1. Edit `src/config.py`
-2. Cache TTL is in `WMSConfig.cache_ttl` (default 600s)
-3. `is_cache_valid()` and `touch_cache()` handle sliding window
+1. Cache logic is in `ogcli-core/src/wms/config.rs` (`WmsConfig.cache_ttl`, default 600s)
+2. EDR caches are per-profile under `~/.wms/edr_cache/`
 
 ## Implementation Status
 
-All core commands are implemented and working:
+Rust implementation at parity with the former Python CLIs (Python code
+was removed after the Rust rewrite):
 
 | Command | Status |
 |---------|--------|
